@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manage project-specific Vogsphere deployments from a Git monorepo."""
+"""Manage project-specific Vogsphere deployments from a main repo."""
 
 CLI_NAME = "vogsync"
 CONFIG_FILE_NAME = ".vogsync.json"
@@ -270,7 +270,7 @@ def command_commit(args: argparse.Namespace, root: Path) -> None:
         project_directory(root, project)
         message = "[{}] {}".format(project, args.message)
     else:
-        say("At repository root: creating an unprefixed commit.", "warning")
+        say("At main repo root: creating an unprefixed commit.", "warning")
         message = args.message
     if not args.message.strip():
         raise ToolError("Commit message must not be empty.")
@@ -319,8 +319,8 @@ def command_render(args: argparse.Namespace, root: Path) -> None:
 
 def command_status(root: Path, check_remote: bool) -> None:
     """Show repository state and compare project splits with remote master."""
-    print("Repository: {}".format(root))
-    print("Project:    {}".format(active_project(root) or "(repository root)"))
+    print("Main repo:  {}".format(root))
+    print("Project:    {}".format(active_project(root) or "(main repo root)"))
     print("Branch:     {}".format(current_branch(root) or "(detached HEAD)"))
     print("\nWorking tree:")
     print(git(["status", "--short", "--branch"], root).stdout.rstrip() or "(clean)")
@@ -357,7 +357,7 @@ def command_status(root: Path, check_remote: bool) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI with its fixed command name."""
-    parser = argparse.ArgumentParser(prog=PROG, description="Manage project-specific Vogsphere deployments from a monorepo.")
+    parser = argparse.ArgumentParser(prog=PROG, description="Manage project-specific Vogsphere deployments from a main repo.")
     parser.add_argument("-v", "--version", action="version", version="%(prog)s " + VERSION)
     commands = parser.add_subparsers(dest="command", required=True)
     remote = commands.add_parser("remote", help="Manage project remote URLs.")
