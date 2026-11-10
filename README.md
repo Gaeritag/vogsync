@@ -272,15 +272,17 @@ URL vers la branche de votre main repo GitHub : le déploiement est forcé.
 
 ## English
 
-`vogsync` manages project-specific Vogsphere deployments from a Git monorepo.
+`vogsync` manages project-specific Vogsphere deployments from a **main repo**:
+one Git repository containing all your **projects** as top-level directories.
+Projects are not nested Git repositories; each has a separate deployment repo.
 It uses `git subtree split` to extract a project's committed history and put its
-files at the root of the destination repository. The monorepo stays unchanged
+files at the root of the destination repository. The main repo stays unchanged
 by the deployment, apart from the Git objects created by the split.
 
 ## Requirements
 
 - Linux or macOS, with Python 3.9 or newer and Git, including `git subtree`.
-- A Git monorepo with projects as top-level directories.
+- A main repo with projects as top-level directories.
 - Network access and the appropriate credentials for your Git remotes. Vogsphere
   may only be reachable from campus.
 
@@ -306,7 +308,21 @@ export PATH="$HOME/.local/bin:$PATH"
 
 On macOS, you can also run `python3 /path/to/vogsync.py` directly.
 
-## Set up your monorepo from scratch
+## Updating
+
+From your clone of this repository:
+
+```sh
+git pull --ff-only
+./update.sh
+```
+
+`update.sh` atomically replaces `~/.local/bin/vogsync` with this checkout's
+`vogsync.py`, after checking Python syntax. An existing installation is required;
+symlinks and non-regular destinations are refused. It does not pull automatically
+or change your projects' configuration. No administrator privileges are needed.
+
+## Set up your main repo from scratch
 
 ### 1. Create your GitHub account and repository
 
@@ -336,7 +352,7 @@ The expected layout is one Git repository with a **top-level directory per
 project**, not a separate nested Git repository for each project:
 
 ```text
-42-cursus/                 # One monorepo, connected to GitHub as origin
+42-cursus/                 # Main repo, connected to GitHub as origin
 ├── .git/                  # Git's local repository data
 ├── .gitignore
 ├── .vogsync.json          # Local, ignored Vogsphere URL mappings
@@ -352,7 +368,7 @@ When you deploy `libft`, its `Makefile` and `srcs/` appear at the root of the
 separate libft Vogsphere repository. Only committed history affecting that
 directory is included. Files outside `libft/` are not deployed.
 
-### 3. Commit and connect the monorepo branch
+### 3. Commit and connect the main repo branch
 
 After adding project files, create an initial commit and push it to GitHub:
 
@@ -370,7 +386,7 @@ use those instead of renaming your branch.
 ### 4. Configure a Vogsphere destination for each project
 
 Obtain the dedicated Vogsphere URL for each project from your school. From the
-monorepo, associate each existing project directory with its own URL:
+main repo, associate each existing project directory with its own URL:
 
 ```sh
 vogsync remote set libft 'YOUR_LIBFT_VOGSPHERE_URL'
@@ -389,7 +405,7 @@ commands on each computer where you want to deploy. Do not commit that file.
 
 ### 5. Work at home and deploy from campus
 
-At home, commit and push changes to your GitHub monorepo:
+At home, commit and push changes to your GitHub main repo:
 
 ```sh
 cd libft
@@ -397,8 +413,8 @@ git add .
 vogsync commit -m 'Implement list functions' --push
 ```
 
-On a campus computer, clone the same GitHub monorepo, install `vogsync`, and
-configure the project URL locally as in step 4. After pulling your monorepo
+On a campus computer, clone the same GitHub main repo, install `vogsync`, and
+configure the project URL locally as in step 4. After pulling your main repo
 changes, check and deploy the project:
 
 ```sh
@@ -412,7 +428,7 @@ vogsync render libft
 
 These are separate destinations:
 
-- **GitHub monorepo remote:** Git stores `origin` in its repository
+- **Main repo remote (GitHub):** Git stores `origin` in its repository
   configuration. `vogsync commit --push` and `vogsync render --pull` use the
   current branch's configured upstream, which is often `origin`. They ask Git
   for that configuration; they do not read `.git` files directly. If that
@@ -424,11 +440,11 @@ These are separate destinations:
   `vogsync remote set PROJECT NEW_VOGSPHERE_URL`.
 
 This separation is important: `render` force-pushes a project's extracted
-history and must not be pointed at your GitHub monorepo branch.
+history and must not be pointed at your GitHub main repo branch.
 
 ## Example workflow
 
-Suppose your monorepo contains `libft/` and `ft_printf/`:
+Suppose your main repo contains `libft/` and `ft_printf/`:
 
 ```sh
 cd ~/42-cursus
@@ -442,7 +458,7 @@ git diff -- .gitignore
 git add .gitignore
 git commit -m 'Ignore local Vogsphere configuration'
 
-# Work on the project and create a prefixed monorepo commit.
+# Work on the project and create a prefixed main repo commit.
 cd libft
 git add .
 vogsync commit -m 'Implement string functions'
@@ -530,6 +546,69 @@ process timeout. Checks are sequential, so multiple unreachable remotes may
 still take time. Synchronization is compared against `master`, even if you
 deploy to another branch with `render --branch`.
 
+### Diagnose your setup
+
+```sh
+vogsync doctor                          # Read-only, offline diagnosis
+vogsync doctor --remote                 # Also check remote read access
+vogsync doctor --remote --branch main   # Check a different project branch
+```
+
+Run this from the main repo root or any directory inside it. Results are marked
+`OK`, `WARN`, or `ERROR`, followed by a summary and actionable guidance. Checks cover:
+
+- Git and `git subtree` availability, Git object integrity, and an initial commit.
+- Git identity (including the configured name and email), branch/upstream configuration, cached ahead/behind counts,
+  uncommitted changes, and Git operations in progress.
+- Nested repositories (including `.git` files), submodules/gitlinks, and merge conflicts.
+- Configuration validity, ignore rules, tracked configuration, and file permissions.
+- All discovered projects, whether or not they have Vogsphere URLs: existing,
+  non-symlink, top-level directories with committed trees. Committed directories,
+  configured projects, and new non-hidden, non-ignored directories are checked.
+- Shared project destinations and project URLs pointing back to the main repo,
+  including common SSH/HTTPS spellings and Git URL rewrites. These checks catch
+  common mistakes, but cannot identify every server alias: always verify destinations.
+- Projects without Vogsphere URLs, with a configuration command for each.
+
+**Main repo remotes** (such as GitHub `origin`) and **project Vogsphere URLs**
+are independent. “No project Vogsphere URLs configured”
+means no project destinations are stored in `.vogsync.json`; it does not mean
+your main repo is missing `origin`. `doctor --remote` checks all configured
+project destinations; without a URL, it can only check a project locally.
+
+#### Exclude non-project directories
+
+Edit the local `.vogsync.json`, keeping any existing project URLs:
+
+```json
+{
+  "exclude": ["other"],
+  "libft": "YOUR_LIBFT_VOGSPHERE_URL",
+  "ft_printf": "YOUR_FT_PRINTF_VOGSPHERE_URL"
+}
+```
+
+`exclude` is a reserved key containing exact top-level directory names, not paths
+or glob patterns. Old URL-only configurations still work, and `remote set`
+preserves the exclusions. An excluded directory cannot also have a project URL;
+remove it from `exclude` before configuring one. Exclusions skip project-specific
+diagnostics and missing-URL warnings, not main repo safety checks such as nested
+repositories, index conflicts, object integrity, or working-tree status. They do
+not change Git tracking or ignore rules. A configuration containing only
+`{"exclude": ["other"]}` is valid too.
+
+Doctor does not modify files or refs, split history, fetch, or push. By default
+it never contacts remotes, and upstream comparisons use possibly stale local refs.
+With `--remote`, it checks read access to each main repo remote and each configured
+project destination, with the same ten-second timeout per query as `status --remote`.
+Project branch checks use `master` unless `--branch` is given; a missing remote
+branch is a warning because the first deployment can create it. Read access does
+not prove push permissions or synchronization; use `status --remote` to compare
+deployed history. A diagnosis cannot guarantee a later deployment will succeed.
+
+Exit status is `1` when errors are found and `0` otherwise, including warnings.
+Doctor reports problems but never fixes them automatically.
+
 ### Help and version
 
 ```sh
@@ -540,6 +619,15 @@ vogsync --version
 
 Commands return `0` on success, `1` for operational errors and `2` for invalid
 command-line arguments.
+
+## Tests
+
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+Tests use temporary local Git repositories; no network or Python dependencies
+are needed. Git and `git subtree` must be installed.
 
 ## Git concepts and further reading
 
