@@ -179,18 +179,61 @@ Sur un ordinateur du campus, clonez le main repo, installez `vogsync`, puis :
 cd 42-cursus
 git pull
 vogsync remote set libft 'URL_VOGSPHERE_LIBFT'
-vogsync render libft --dry-run
-vogsync render libft
+vogsync deploy libft --dry-run
+vogsync deploy libft
 ```
 
-Le répertoire de travail doit être propre pour `render` : commitez ou mettez
+Le répertoire de travail doit être propre pour `deploy` : commitez ou mettez
 de côté les changements avant de déployer. Seul l'historique déjà commité du
 projet est extrait. Le dry-run vérifie la connexion en lecture, pas les droits
 de push ; il ne pousse aucune référence.
 
-**Attention :** `render` effectue un push forcé sur la branche distante choisie
+`deploy` pousse d'abord **tout le main repo** vers le suivi de la branche courante
+(normalement GitHub), sans forcer, puis déploie le projet sur Vogsphere. Une branche
+avec un suivi est donc obligatoire, même sans `--pull`. Si le premier push échoue,
+Vogsphere n'est pas modifié. Si seul le déploiement échoue, le main repo est déjà
+sauvegardé ; corrigez le problème puis relancez `deploy`. Les deux push ne sont pas
+une transaction.
+
+Au campus, après avoir modifié un projet, un seul `deploy` pousse donc vers les
+deux destinations :
+
+```sh
+git add libft
+vogsync commit libft -m 'Fix at school'
+vogsync deploy libft
+```
+
+Cela concerne `vogsync deploy`, pas un `git push` exécuté directement ni un push
+depuis un clone séparé du projet : ces opérations ne synchronisent pas le monorepo.
+
+**Attention :** `deploy` effectue un push forcé sur la branche distante choisie
 (`master` par défaut). Il peut écraser son historique. Vérifiez toujours l'URL
 et la branche de destination avant de déployer.
+
+### Que fait exactement `deploy` ?
+
+Le nom signifie **déployer un projet**. Depuis le monorepo :
+
+```sh
+vogsync deploy libft
+```
+
+1. Vérifie que `libft` existe, que le répertoire de travail est propre et que la
+   branche courante possède un suivi distant.
+2. Extrait l'historique déjà commité de `libft` avec `git subtree split`.
+3. Pousse **tout le monorepo** vers son suivi distant, normalement GitHub,
+   **sans forcer**.
+4. Pousse l'historique extrait vers le dépôt Vogsphere configuré pour `libft`,
+   **en forçant**. Les fichiers du projet apparaissent directement à la racine
+   du dépôt Vogsphere, sans le dossier parent `libft/`.
+
+La commande **ne crée pas de commit** et n'envoie pas les changements non commités.
+`--branch` choisit uniquement la branche Vogsphere (`master` par défaut), pas
+la branche GitHub. `--dry-run` extrait l'historique et vérifie l'accès en lecture
+à Vogsphere, mais **ne pousse vers aucun des deux dépôts**.
+
+La commande s'appelait auparavant `render` ; utilisez désormais `deploy`.
 
 ### Commandes utiles
 
@@ -200,8 +243,8 @@ vogsync remote list                  # Lister les URL configurées
 vogsync commit -m 'Fix a bug'        # Commit préfixé selon le dossier courant
 vogsync commit libft -a -m 'Fix'     # Modifications suivies de libft uniquement
 vogsync commit -m 'Fix' --push       # Puis pousser vers le suivi Git
-vogsync render libft --branch main   # Déployer sur une autre branche distante
-vogsync render libft --pull           # Mettre à jour le main repo avant le split
+vogsync deploy libft --branch main   # Déployer sur une autre branche distante
+vogsync deploy libft --pull           # Mettre à jour le main repo avant le split
 vogsync status                       # État local, sans accès réseau
 vogsync status --remote              # Comparer chaque projet à master distant
 vogsync doctor                       # Diagnostiquer Git et l'architecture locale
@@ -215,7 +258,7 @@ ce projet et les autres changements indexés restent dans l'index ; les nouveaux
 fichiers non suivis ne sont pas ajoutés automatiquement. À la racine sans nom de
 projet, le commit n'a pas de préfixe et `-a` concerne tout le dépôt.
 
-`--push` et `--pull` nécessitent une branche avec un suivi distant configuré.
+`commit --push` et `deploy` nécessitent une branche avec un suivi distant configuré.
 `--pull` utilise `git pull --ff-only` et peut modifier la branche locale même
 avec `--dry-run`. `status --remote` vérifie les dépôts séquentiellement, avec
 un délai SSH de 2 secondes et une limite totale de 10 secondes par interrogation.
@@ -277,7 +320,7 @@ pas directement `.git`. Si ce suivi utilise `origin`, une modification avec
 push et pull. Si le suivi utilise un autre remote, modifier `origin` ne le
 change pas.
 
-En revanche, `render` utilise l'URL du projet dans `.vogsync.json` : modifiez-la
+Pour le déploiement Vogsphere, `deploy` utilise l'URL du projet dans `.vogsync.json` : modifiez-la
 avec `vogsync remote set PROJET NOUVELLE_URL_VOGSPHERE`. Ne pointez pas cette
 URL vers la branche de votre main repo GitHub : le déploiement est forcé.
 
@@ -445,7 +488,7 @@ git push -u origin main
 ```
 
 The `-u` flag configures the upstream used by `vogsync commit --push` and
-`vogsync render --pull`. If you already have an established branch and upstream,
+`vogsync deploy` (including its optional `--pull`). If you already have an established branch and upstream,
 use those instead of renaming your branch.
 
 ### 4. Configure a Vogsphere destination for each project
@@ -485,8 +528,8 @@ changes, check and deploy the project:
 ```sh
 git pull
 vogsync remote set libft 'YOUR_LIBFT_VOGSPHERE_URL'
-vogsync render libft --dry-run
-vogsync render libft
+vogsync deploy libft --dry-run
+vogsync deploy libft
 ```
 
 ### GitHub origin versus Vogsphere URLs
@@ -494,17 +537,17 @@ vogsync render libft
 These are separate destinations:
 
 - **Main repo remote (GitHub):** Git stores `origin` in its repository
-  configuration. `vogsync commit --push` and `vogsync render --pull` use the
+  configuration. `vogsync commit --push` and `vogsync deploy` use the
   current branch's configured upstream, which is often `origin`. They ask Git
   for that configuration; they do not read `.git` files directly. If that
   upstream uses `origin`, changing its URL with `git remote set-url origin URL`
   is picked up by subsequent pushes and pulls. If the branch uses a different
   upstream remote, changing `origin` does not change that upstream.
-- **Vogsphere project URLs:** `vogsync render` reads the project's URL from
+- **Vogsphere project URLs:** `vogsync deploy` reads the project's URL from
   `.vogsync.json`, not from `origin`. Change it with
   `vogsync remote set PROJECT NEW_VOGSPHERE_URL`.
 
-This separation is important: `render` force-pushes a project's extracted
+This separation is important: `deploy` force-pushes a project's extracted
 history and must not be pointed at your GitHub main repo branch.
 
 ## Example workflow
@@ -529,12 +572,12 @@ git add .
 vogsync commit -m 'Implement string functions'
 
 # On campus, check connectivity before deploying.
-vogsync render libft --dry-run
-vogsync render libft
+vogsync deploy libft --dry-run
+vogsync deploy libft
 ```
 
 Replace the example URL with the repository URL supplied by your school.
-`render` deploys committed history only and requires a clean working tree.
+`deploy` deploys committed history only and requires a clean working tree.
 
 ## Commands
 
@@ -582,16 +625,53 @@ a detached HEAD. A failed push does not undo the commit.
 ### Deploy a project
 
 ```sh
-vogsync render libft --dry-run       # Split and check remote connectivity
-vogsync render libft                 # Deploy to remote master
-vogsync render libft --branch main   # Deploy to a different remote branch
-vogsync render libft --pull          # Fast-forward from the upstream first
+vogsync deploy libft --dry-run       # Split and check remote connectivity
+vogsync deploy libft                 # Push the monorepo, then deploy to Vogsphere master
+vogsync deploy libft --branch main   # Deploy to a different remote branch
+vogsync deploy libft --pull          # Fast-forward from the upstream first
 ```
 
-The dry run performs the split and checks remote read connectivity, but does not
-verify push permissions or push any refs. `--pull` requires a configured
-upstream and uses `git pull --ff-only`; it can update the local branch even
-when combined with `--dry-run`.
+`deploy` first pushes **the whole main repo** to the current branch's configured
+upstream (normally GitHub), without force, then deploys the project split to
+Vogsphere. A branch with an upstream is required even without `--pull`.
+If the main repo push fails (for example, GitHub has newer commits), Vogsphere
+is not updated: review the changes and pull/reconcile before retrying. If the
+Vogsphere push fails, the main repo has already been pushed; fix the destination
+or access problem and retry `deploy`. These two pushes are not a transaction.
+
+After editing at school, commit your changes and deploy once to update both:
+
+```sh
+git add libft
+vogsync commit libft -m 'Fix at school'
+vogsync deploy libft
+```
+
+This behavior applies to `vogsync deploy`, not to a plain `git push` or a push
+from a separate project clone; those do not synchronize the monorepo. No campus
+detection or Git hooks are needed; the same command works wherever both remotes
+are reachable.
+
+The dry run validates the upstream configuration, performs the split and checks
+Vogsphere read connectivity, but does not verify push permissions or push to
+either destination. `--pull` uses `git pull --ff-only`; it can update the local
+branch even when combined with `--dry-run`.
+
+#### What exactly does `deploy` do?
+
+From your monorepo, `vogsync deploy libft`:
+
+1. Checks that the project exists, the working tree is clean, and the current
+   branch has an upstream.
+2. Extracts `libft`'s committed history using `git subtree split`.
+3. Pushes **the whole monorepo** to its upstream, normally GitHub, **without force**.
+4. **Force-pushes** the extracted history to the configured libft Vogsphere repo.
+   Project files appear directly at its root, without the parent `libft/` directory.
+
+It **does not create a commit** or deploy uncommitted changes. `--branch` selects
+only the Vogsphere branch (`master` by default), not the GitHub branch.
+`--dry-run` extracts history and checks Vogsphere read access, but pushes nothing
+to either destination. The command was previously named `render`; use `deploy` now.
 
 **Warning:** deployment force-pushes to the selected remote branch and can
 overwrite its existing history. Check that the destination is correct before
@@ -609,7 +689,7 @@ The default status does not contact the network. With `--remote`, each remote
 check uses a two-second SSH connection timeout and a ten-second overall
 process timeout. Checks are sequential, so multiple unreachable remotes may
 still take time. Synchronization is compared against `master`, even if you
-deploy to another branch with `render --branch`.
+deploy to another branch with `deploy --branch`.
 
 ### Diagnose your setup
 
@@ -678,7 +758,7 @@ Doctor reports problems but never fixes them automatically.
 
 ```sh
 vogsync --help
-vogsync render --help
+vogsync deploy --help
 vogsync --version
 ```
 
