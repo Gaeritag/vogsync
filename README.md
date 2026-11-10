@@ -13,7 +13,7 @@ fichiers à la racine du dépôt de destination.
 
 ### Prérequis
 
-- Linux ou macOS, Python 3.9 ou plus récent, Git et `git subtree`.
+- Linux, macOS ou Windows, Python 3.9 ou plus récent, Git et `git subtree`.
 - Un compte GitHub et l'accès aux URL Vogsphere fournies par votre école.
 - Une connexion et les droits d'accès aux dépôts concernés. Vogsphere peut
   n'être accessible que depuis le campus.
@@ -38,6 +38,28 @@ export PATH="$HOME/.local/bin:$PATH"
 
 Sur macOS, vous pouvez aussi lancer `python3 /chemin/vers/vogsync.py`.
 
+### Installation sous Windows
+
+Installez Python 3.9+ (avec le lanceur `py` ou `python` dans le `PATH`) et
+[Git for Windows](https://gitforwindows.org/), accessible dans le `PATH`.
+Vérifiez `git subtree -h`. Depuis PowerShell ou l'invite de commandes, dans
+ce clone contenant aussi `windows_install.py` :
+
+```powershell
+.\install.bat
+```
+
+Ajoutez `%LOCALAPPDATA%\vogsync\bin` au **PATH utilisateur** dans les paramètres
+Windows, puis ouvrez un nouveau terminal. `vogsync.bat` permet alors d'utiliser
+`vogsync` normalement. Aucun droit administrateur n'est nécessaire et les
+fichiers existants ne sont pas écrasés. Pour lancer sans installation :
+`py -3 chemin\vers\vogsync.py --help`.
+
+Les exemples suivants utilisent la syntaxe d'un shell POSIX ; sous Windows,
+utilisez PowerShell (ou adaptez les guillemets simples en guillemets doubles
+dans cmd.exe). Les droits de `.vogsync.json` sont gérés par les ACL Windows,
+pas par `chmod` ; le fichier reste local et ignoré par Git.
+
 ### Mise à jour
 
 Depuis votre clone de ce dépôt :
@@ -51,6 +73,11 @@ git pull --ff-only
 de ce clone, après vérification de sa syntaxe Python. Il nécessite une
 installation existante et refuse les liens symboliques. Il ne lance pas de
 pull automatiquement et ne modifie pas la configuration de vos projets.
+
+Sous Windows, après `git pull --ff-only`, lancez `.\update.bat` depuis ce clone.
+Il vérifie la syntaxe Python puis remplace les fichiers installés dans
+`%LOCALAPPDATA%\vogsync\bin`. Une installation existante est nécessaire ; les
+liens et répertoires sont refusés. Aucun pull n'est lancé automatiquement.
 
 ### Configuration pas à pas
 
@@ -281,7 +308,7 @@ by the deployment, apart from the Git objects created by the split.
 
 ## Requirements
 
-- Linux or macOS, with Python 3.9 or newer and Git, including `git subtree`.
+- Linux, macOS or Windows, with Python 3.9 or newer and Git, including `git subtree`.
 - A main repo with projects as top-level directories.
 - Network access and the appropriate credentials for your Git remotes. Vogsphere
   may only be reachable from campus.
@@ -308,6 +335,27 @@ export PATH="$HOME/.local/bin:$PATH"
 
 On macOS, you can also run `python3 /path/to/vogsync.py` directly.
 
+## Installation on Windows
+
+Install Python 3.9+ (with the `py` launcher or `python` on `PATH`) and
+[Git for Windows](https://gitforwindows.org/), available on `PATH`.
+Verify `git subtree -h`. From PowerShell or Command Prompt, in this checkout
+(keep `windows_install.py` beside the batch files), run:
+
+```powershell
+.\install.bat
+```
+
+Add `%LOCALAPPDATA%\vogsync\bin` to your **user PATH** in Windows settings, then
+open a new terminal. The installed `vogsync.bat` lets you run `vogsync` normally.
+No administrator privileges are needed; existing files are not overwritten.
+Alternatively, run `py -3 path\to\vogsync.py --help` without installing.
+
+The examples below use POSIX shell syntax. On Windows, use PowerShell, or replace
+single quotes with double quotes in cmd.exe; adapt shell-specific commands such
+as `mkdir -p`. Configuration access is controlled by Windows ACLs, not `chmod`;
+`.vogsync.json` still stays local and ignored by Git.
+
 ## Updating
 
 From your clone of this repository:
@@ -321,6 +369,12 @@ git pull --ff-only
 `vogsync.py`, after checking Python syntax. An existing installation is required;
 symlinks and non-regular destinations are refused. It does not pull automatically
 or change your projects' configuration. No administrator privileges are needed.
+
+On Windows, run `.\update.bat` after `git pull --ff-only` in this checkout.
+It checks Python syntax and replaces the installed files in
+`%LOCALAPPDATA%\vogsync\bin`. An existing installation is required; links and
+directories are refused. Each file is replaced atomically, but the two-file
+update is not a transaction. It does not pull or change project configuration.
 
 ## Set up your main repo from scratch
 
@@ -483,7 +537,7 @@ vogsync remote list
 
 Mappings are stored as a JSON object in `.vogsync.json` at the repository root.
 The first `remote set` adds an ignore rule if needed. The file is created with
-permissions `0600`; existing file permissions are not changed. If the file was
+permissions `0600` on POSIX (Windows uses inherited ACLs); existing file permissions are not changed. If the file was
 already tracked by Git, an ignore rule alone will not untrack it: inspect its
 history and remove it from the index as appropriate.
 
