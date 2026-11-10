@@ -1,4 +1,4 @@
-"""Windows installer logic, path regressions, and native batch smoke tests."""
+"""Windows installer logic, path regressions, and native launcher smoke tests."""
 
 import os
 from pathlib import Path
@@ -21,14 +21,17 @@ class WindowsInstallTests(unittest.TestCase):
         self.checkout = self.base / "source with spaces"
         self.checkout.mkdir()
         project = Path(__file__).resolve().parents[1]
-        for name in ("windows_install.py", "vogsync.py", "install.bat", "update.bat"):
+        for name in ("install.py", "vogsync.py"):
             shutil.copy2(project / name, self.checkout / name)
         self.local = self.base / "local app data"
         self.bin = self.local / "vogsync" / "bin"
         self.env = dict(os.environ, LOCALAPPDATA=str(self.local))
 
     def run_installer(self, mode="install", *args):
-        return subprocess.run([sys.executable, str(self.checkout / "windows_install.py"), mode, *args],
+        # Exercise the Windows installation layout even on POSIX test hosts.
+        code = ("import sys; sys.path.insert(0, sys.argv.pop(1)); "
+                "import install; install.WINDOWS = True; sys.exit(install.main())")
+        return subprocess.run([sys.executable, "-c", code, str(self.checkout), mode, *args],
                               cwd=self.base, env=self.env, capture_output=True, text=True)
 
     def test_install_then_update(self):
@@ -53,7 +56,7 @@ class WindowsInstallTests(unittest.TestCase):
     def test_update_requires_installation(self):
         result = self.run_installer("update")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("install.bat first", result.stderr)
+        self.assertIn("install.py install first", result.stderr)
 
     def test_invalid_source_preserves_installation(self):
         self.assertEqual(self.run_installer().returncode, 0)
@@ -97,19 +100,19 @@ class WindowsInstallTests(unittest.TestCase):
         self.assertEqual(target.read_bytes(), before)
 
     @unittest.skipUnless(os.name == "nt", "Requires native cmd.exe")
-    def test_native_batch_install_launcher_and_update(self):
+    def test_native_windows_install_launcher_and_update(self):
         def batch(path, *args):
             command = subprocess.list2cmdline([str(path), *args])
             return subprocess.run(["cmd.exe", "/d", "/s", "/c", '"' + command + '"'],
                                   cwd=self.base, env=self.env, capture_output=True, text=True)
-        result = batch(self.checkout / "install.bat")
+        result = self.run_installer()
         self.assertEqual(result.returncode, 0, result.stderr)
         result = batch(self.bin / "vogsync.bat", "--version")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("vogsync", result.stdout)
         self.assertEqual(batch(self.bin / "vogsync.bat", "--invalid").returncode, 2)
-        self.assertEqual(batch(self.checkout / "install.bat").returncode, 1)
-        self.assertEqual(batch(self.checkout / "update.bat").returncode, 0)
+        self.assertEqual(self.run_installer().returncode, 1)
+        self.assertEqual(self.run_installer("update").returncode, 0)
 
 
 class WindowsPathTests(unittest.TestCase):
