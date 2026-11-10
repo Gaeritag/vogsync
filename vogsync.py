@@ -8,9 +8,11 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Dict, List, Optional, Sequence, Tuple
+from urllib.parse import urlsplit
 
 VERSION = "1.0.0"
 PROG = CLI_NAME
@@ -104,7 +106,6 @@ def load_settings(root: Path) -> Tuple[Dict[str, str], List[str]]:
     if set(excluded) & result.keys():
         raise ToolError("{}: excluded directories cannot also have project Vogsphere URLs.".format(path))
     return result, excluded
-
 
 
 def load_config(root: Path) -> Dict[str, str]:
@@ -355,6 +356,197 @@ def command_status(root: Path, check_remote: bool) -> None:
         raise ToolError("Could not check: {}.".format(", ".join(failures)))
 
 
+def destination_key(root: Path, url: str) -> str:
+    """Compare common URL spellings, honoring Git's local URL rewrites."""
+    url = git(["ls-remote", "--get-url", "--", url], root).stdout.strip()
+    if "://" in url:
+        parsed = urlsplit(url)
+        if parsed.scheme != "file":
+            host = (parsed.hostname or "").lower()
+            default_ports = {"ssh": 22, "https": 443, "http": 80, "git": 9418}
+            if parsed.port is not None and parsed.port != default_ports.get(parsed.scheme):
+                host += ":{}".format(parsed.port)
+            return "{}:{}".format(host, parsed.path.lstrip("/").rstrip("/").removesuffix(".git"))
+        url = parsed.path
+    elif re.match(r"^(?:[^/@:]+@)?[^/:]+:", url):
+        host, path = url.split(":", 1)
+        return "{}:{}".format(host.split("@")[-1].lower(), path.lstrip("/").rstrip("/").removesuffix(".git"))
+    return str((root / url).resolve())
+
+
+def command_doctor(root: Path, check_remote: bool, target_branch: str) -> bool:
+    """Diagnose setup without changing files, refs, or fetching remote objects."""
+    counts = {"OK": 0, "WARN": 0, "ERROR": 0}
+
+    def report(state: str, message: str) -> None:
+        counts[state] += 1
+        say("[{}] {}".format(state, message), {"OK": "success", "WARN": "warning", "ERROR": "error"}[state])
+
+    def check_git(label: str, arguments: Sequence[str]) -> Optional[str]:
+        try:
+            output = git(["--no-optional-locks", *arguments], root).stdout.strip()
+            report("OK", label)
+            return output
+        except ToolError as exc:
+            report("ERROR", "{}: {}".format(label, exc))
+            return None
+
+    print("Main repo: {}\n".format(root))
+    check_git("Git available", ["--version"])
+    # The help command does not run a split or create Git objects.
+    probe = subprocess.run(["git", "subtree", "-h"], cwd=str(root), capture_output=True, text=True)
+    if probe.returncode in (0, 129) and "git subtree" in probe.stdout + probe.stderr:
+        report("OK", "git subtree available")
+    else:
+        report("ERROR", "git subtree is unavailable; install Git's subtree extension.")
+    head = check_git("HEAD resolves to a commit (otherwise create an initial commit)", ["rev-parse", "--verify", "HEAD^{commit}"])
+    check_git("Git object integrity", ["fsck", "--full", "--no-dangling"])
+    for field in ("name", "email"):
+        try:
+            value = git(["config", "--get", "user." + field], root).stdout.strip()
+        except ToolError:
+            value = ""
+        report("OK" if value else "WARN", "Git user.{} {}".format(field, "is configured: " + value if value else "is missing; set it with git config user.{} <value>".format(field)))
+
+    branch = current_branch(root)
+    if branch is None:
+        report("WARN", "Detached HEAD; check out a branch before using --push or --pull.")
+    else:
+        report("OK", "Current branch: {}".format(branch))
+        try:
+            tracking = upstream(root)
+            report("OK", "Upstream: {}".format(tracking))
+            counts_text = git(["rev-list", "--left-right", "--count", "HEAD...@{upstream}"], root).stdout.split()
+            ahead, behind = map(int, counts_text)
+            report("WARN" if ahead or behind else "OK", "Upstream comparison (cached, no fetch): {} ahead, {} behind.{}".format(ahead, behind, " Pull/push after reviewing changes." if ahead or behind else ""))
+        except ToolError as exc:
+            report("WARN", str(exc))
+    dirty = check_git("Working-tree status readable", ["status", "--porcelain"])
+    if dirty is not None:
+        report("WARN" if dirty else "OK", "Uncommitted changes; commit or stash before render." if dirty else "Working tree is clean.")
+    for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "BISECT_LOG"):
+        path = git(["rev-parse", "--git-path", marker], root).stdout.strip()
+        if (root / path).exists():
+            report("WARN", "Git operation in progress ({}); finish or abort it before deploying.".format(marker))
+
+    # Ask Git for paths; a linked worktree's .git is a file, not a directory.
+    def scan_error(exc: OSError) -> None:
+        report("ERROR", "Could not inspect project layout: {}".format(exc))
+
+    nested = []
+    for directory, directories, files in os.walk(root, onerror=scan_error, followlinks=False):
+        path = Path(directory)
+        if path != root and (".git" in directories or ".git" in files):
+            nested.append(str(path.relative_to(root)))
+        if ".git" in directories:
+            directories.remove(".git")
+    for path in sorted(nested):
+        report("ERROR", "Nested Git repository at {}; projects must belong to the main repo, not separate repositories.".format(path))
+    if not nested:
+        report("OK", "No nested Git repositories.")
+    index = check_git("Git index readable", ["ls-files", "--stage", "-z"])
+    if index:
+        for entry in index.split("\x00"):
+            if entry.startswith("160000 "):
+                report("ERROR", "Submodule/gitlink at {}; subtree deployment does not include its files. Use a regular project directory.".format(entry.split("\t", 1)[1]))
+            if entry and entry.split("\t", 1)[0].split()[-1] != "0":
+                report("ERROR", "Unresolved merge conflict at {}; resolve and commit before deploying.".format(entry.split("\t", 1)[1]))
+
+    config_path = root / CONFIG_FILE_NAME
+    config = None
+    excluded = []
+    try:
+        config, excluded = load_settings(root)
+        report("OK", "Project configuration is valid.")
+        if not config:
+            report("WARN", "No project Vogsphere URLs configured in {}; this is separate from main repo remotes. Use '{} remote set PROJECT URL'.".format(CONFIG_FILE_NAME, PROG))
+    except ToolError as exc:
+        report("ERROR", str(exc))
+    if config_path.is_symlink():
+        report("ERROR", "{} is a symlink; use a regular local configuration file.".format(CONFIG_FILE_NAME))
+    if config_path.exists():
+        tracked = git(["ls-files", "--", CONFIG_FILE_NAME], root).stdout.strip()
+        if tracked:
+            report("ERROR", "{} is tracked; review its history and remove it from the index to keep URLs local.".format(CONFIG_FILE_NAME))
+        ignored = subprocess.run(["git", "check-ignore", "-q", "--no-index", "--", CONFIG_FILE_NAME], cwd=str(root), capture_output=True, text=True)
+        if ignored.returncode == 1:
+            report("WARN", "{} is not ignored; add /{} to .gitignore.".format(CONFIG_FILE_NAME, CONFIG_FILE_NAME))
+        elif ignored.returncode != 0:
+            report("ERROR", "Could not check configuration ignore rules: {}".format(ignored.stderr.strip()))
+        elif not tracked:
+            report("OK", "Local configuration is ignored and untracked.")
+        if config_path.stat().st_mode & 0o077:
+            report("WARN", "{} is accessible to other users; consider chmod 600 {}.".format(CONFIG_FILE_NAME, CONFIG_FILE_NAME))
+
+    git_dir = git(["rev-parse", "--absolute-git-dir"], root).stdout.strip()
+    main_repo_destinations = {destination_key(root, str(root)), destination_key(root, git_dir)}
+    remotes = git(["remote"], root).stdout.splitlines()
+    if not remotes:
+        report("WARN", "No main repo Git remote; add one before pushing your work.")
+    for remote in remotes:
+        try:
+            for mode in ([], ["--push"]):
+                urls = git(["remote", "get-url", "--all", *mode, remote], root).stdout.splitlines()
+                main_repo_destinations.update(destination_key(root, url) for url in urls)
+            report("OK", "Main repo remote {} is configured.".format(remote))
+            if check_remote:
+                url = git(["remote", "get-url", remote], root).stdout.strip()
+                remote_head(root, url, target_branch)
+                report("OK", "Main repo remote {} is readable.".format(remote))
+        except (ToolError, ValueError) as exc:
+            report("ERROR", "Main repo remote {}: {}".format(remote, exc))
+
+    projects = set(config or {})
+    if head:
+        tree = check_git("Top-level committed layout readable", ["ls-tree", "-z", "--name-only", "-d", "HEAD"])
+        projects.update(name for name in (tree or "").split("\x00") if name and not name.startswith("."))
+    # Include new project directories even before their first commit, but not
+    # ignored build/cache directories. Never follow symlinks during discovery.
+    for path in root.iterdir():
+        if not path.name.startswith(".") and path.is_dir():
+            ignored = subprocess.run(["git", "check-ignore", "-q", "--", path.name],
+                                     cwd=str(root), capture_output=True, text=True)
+            if ignored.returncode == 1:
+                projects.add(path.name)
+    for project in sorted(excluded):
+        report("OK", "{}: excluded from project diagnosis.".format(project))
+    destinations: Dict[str, str] = {}
+    for project in sorted(projects - set(excluded)):
+        try:
+            project_directory(root, project)
+            report("OK", "{}: regular top-level project directory.".format(project))
+            if head:
+                kind = git(["cat-file", "-t", "HEAD:" + project], root).stdout.strip()
+                if kind != "tree":
+                    raise ToolError("Project is not a committed directory; commit its files before rendering.")
+                report("OK", "{}: committed project tree exists.".format(project))
+        except ToolError as exc:
+            report("ERROR", "{}: {}".format(project, exc))
+        url = (config or {}).get(project)
+        if not url:
+            if config is not None:
+                report("WARN", "{}: no project Vogsphere URL configured; use '{} remote set {} URL'.".format(project, PROG, project))
+            continue
+        try:
+            key = destination_key(root, url)
+            if key in main_repo_destinations:
+                report("ERROR", "{}: deployment points to the main repo! Set a separate Vogsphere URL; render force-pushes.".format(project))
+            if key in destinations:
+                report("ERROR", "{} and {} share a deployment destination; use a separate repository per project.".format(destinations[key], project))
+            destinations[key] = project
+            if check_remote:
+                sha = remote_head(root, url, target_branch)
+                report("OK" if sha else "WARN", "{}: remote is readable; {}.".format(project, "branch {} exists".format(target_branch) if sha else "branch {} does not exist yet".format(target_branch)))
+        except (ToolError, ValueError) as exc:
+            report("ERROR", "{}: {}".format(project, exc))
+    if not check_remote:
+        print("\nOffline checks only; use '{} doctor --remote' to check remote read access.".format(PROG))
+    else:
+        print("\nRemote checks verify read access only, not push permissions or synchronization.")
+    print("\nDiagnosis: {} OK, {} warning(s), {} error(s).".format(counts["OK"], counts["WARN"], counts["ERROR"]))
+    return counts["ERROR"] == 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI with its fixed command name."""
     parser = argparse.ArgumentParser(prog=PROG, description="Manage project-specific Vogsphere deployments from a main repo.")
@@ -380,6 +572,9 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument("--branch", default="master", help="Target remote branch (default: master).")
     status = commands.add_parser("status", help="Show repository status and configured remotes.")
     status.add_argument("-r", "--remote", action="store_true", help="Check synchronization with Vogsphere remotes (requires network).")
+    doctor = commands.add_parser("doctor", help="Diagnose Git health, project layout, and deployment configuration (read-only).")
+    doctor.add_argument("-r", "--remote", action="store_true", help="Also check read access to main repo and project remotes (requires network).")
+    doctor.add_argument("--branch", default="master", help="Project remote branch to check (default: master).")
     return parser
 
 
@@ -396,6 +591,11 @@ def main() -> int:
             command_render(args, root)
         elif args.command == "status":
             command_status(root, args.remote)
+        elif args.command == "doctor":
+            if not args.branch or args.branch.startswith("-"):
+                raise ToolError("Invalid target branch: {!r}".format(args.branch))
+            git(["check-ref-format", "refs/heads/" + args.branch], root)
+            return 0 if command_doctor(root, args.remote, args.branch) else 1
         return 0
     except ToolError as exc:
         say("{}: error: {}".format(PROG, exc), "error", error=True)
