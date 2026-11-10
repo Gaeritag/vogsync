@@ -20,12 +20,12 @@ fichiers à la racine du dépôt de destination.
 
 Aucun paquet Python ni droit administrateur n'est nécessaire.
 
-### Installation sous Linux
+### Installation sous Linux et macOS
 
-Depuis le répertoire contenant `install.sh` et `vogsync.py` :
+Depuis le répertoire contenant `install.py` et `vogsync.py` :
 
 ```sh
-./install.sh
+python3 install.py install
 ```
 
 L'exécutable est copié dans `~/.local/bin`. L'installateur refuse d'écraser un
@@ -36,17 +36,18 @@ ligne à la configuration de votre shell, puis rechargez-la :
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Sur macOS, vous pouvez aussi lancer `python3 /chemin/vers/vogsync.py`.
+Vous pouvez aussi lancer `python3 /chemin/vers/vogsync.py` sans installation.
+Le même `install.py` gère les trois plateformes ; sans argument, il installe.
 
 ### Installation sous Windows
 
 Installez Python 3.9+ (avec le lanceur `py` ou `python` dans le `PATH`) et
 [Git for Windows](https://gitforwindows.org/), accessible dans le `PATH`.
 Vérifiez `git subtree -h`. Depuis PowerShell ou l'invite de commandes, dans
-ce clone contenant aussi `windows_install.py` :
+ce clone contenant `install.py` et `vogsync.py` :
 
 ```powershell
-.\install.bat
+py -3 install.py install
 ```
 
 Ajoutez `%LOCALAPPDATA%\vogsync\bin` au **PATH utilisateur** dans les paramètres
@@ -54,6 +55,7 @@ Windows, puis ouvrez un nouveau terminal. `vogsync.bat` permet alors d'utiliser
 `vogsync` normalement. Aucun droit administrateur n'est nécessaire et les
 fichiers existants ne sont pas écrasés. Pour lancer sans installation :
 `py -3 chemin\vers\vogsync.py --help`.
+Si le lanceur `py` n'est pas disponible, utilisez `python install.py install`.
 
 Les exemples suivants utilisent la syntaxe d'un shell POSIX ; sous Windows,
 utilisez PowerShell (ou adaptez les guillemets simples en guillemets doubles
@@ -66,18 +68,22 @@ Depuis votre clone de ce dépôt :
 
 ```sh
 git pull --ff-only
-./update.sh
+python3 install.py update
 ```
 
-`update.sh` remplace atomiquement `~/.local/bin/vogsync` par le `vogsync.py`
+`install.py update` remplace atomiquement `~/.local/bin/vogsync` par le `vogsync.py`
 de ce clone, après vérification de sa syntaxe Python. Il nécessite une
 installation existante et refuse les liens symboliques. Il ne lance pas de
 pull automatiquement et ne modifie pas la configuration de vos projets.
 
-Sous Windows, après `git pull --ff-only`, lancez `.\update.bat` depuis ce clone.
+Sous Windows, après `git pull --ff-only`, lancez `py -3 install.py update`
+(ou `python install.py update`) depuis ce clone.
 Il vérifie la syntaxe Python puis remplace les fichiers installés dans
 `%LOCALAPPDATA%\vogsync\bin`. Une installation existante est nécessaire ; les
-liens et répertoires sont refusés. Aucun pull n'est lancé automatiquement.
+liens et répertoires sont refusés. Chaque fichier est remplacé atomiquement,
+mais la mise à jour des deux fichiers n'est pas une transaction.
+Aucun pull n'est lancé automatiquement. Les anciennes installations restent
+compatibles ; les scripts `.sh` et `.bat` d'installation sont remplacés par `install.py`.
 
 ### Configuration pas à pas
 
@@ -315,12 +321,12 @@ by the deployment, apart from the Git objects created by the split.
 
 No Python packages or root privileges are required.
 
-## Installation on Linux
+## Installation on Linux and macOS
 
-From the directory containing `install.sh` and `vogsync.py`, run:
+From the directory containing `install.py` and `vogsync.py`, run:
 
 ```sh
-./install.sh
+python3 install.py install
 ```
 
 This copies the executable to `~/.local/bin/vogsync`.
@@ -333,23 +339,25 @@ shell or reload that configuration:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-On macOS, you can also run `python3 /path/to/vogsync.py` directly.
+You can also run `python3 /path/to/vogsync.py` without installing.
+The same `install.py` handles all three platforms; omitting the argument installs.
 
 ## Installation on Windows
 
 Install Python 3.9+ (with the `py` launcher or `python` on `PATH`) and
 [Git for Windows](https://gitforwindows.org/), available on `PATH`.
 Verify `git subtree -h`. From PowerShell or Command Prompt, in this checkout
-(keep `windows_install.py` beside the batch files), run:
+(keep `install.py` beside `vogsync.py`), run:
 
 ```powershell
-.\install.bat
+py -3 install.py install
 ```
 
 Add `%LOCALAPPDATA%\vogsync\bin` to your **user PATH** in Windows settings, then
 open a new terminal. The installed `vogsync.bat` lets you run `vogsync` normally.
 No administrator privileges are needed; existing files are not overwritten.
 Alternatively, run `py -3 path\to\vogsync.py --help` without installing.
+If the `py` launcher is unavailable, use `python install.py install`.
 
 The examples below use POSIX shell syntax. On Windows, use PowerShell, or replace
 single quotes with double quotes in cmd.exe; adapt shell-specific commands such
@@ -362,19 +370,22 @@ From your clone of this repository:
 
 ```sh
 git pull --ff-only
-./update.sh
+python3 install.py update
 ```
 
-`update.sh` atomically replaces `~/.local/bin/vogsync` with this checkout's
+`install.py update` atomically replaces `~/.local/bin/vogsync` with this checkout's
 `vogsync.py`, after checking Python syntax. An existing installation is required;
 symlinks and non-regular destinations are refused. It does not pull automatically
 or change your projects' configuration. No administrator privileges are needed.
 
-On Windows, run `.\update.bat` after `git pull --ff-only` in this checkout.
+On Windows, run `py -3 install.py update` (or `python install.py update`)
+after `git pull --ff-only` in this checkout.
 It checks Python syntax and replaces the installed files in
 `%LOCALAPPDATA%\vogsync\bin`. An existing installation is required; links and
 directories are refused. Each file is replaced atomically, but the two-file
 update is not a transaction. It does not pull or change project configuration.
+Existing installations remain compatible; `install.py` replaces the old `.sh`
+and `.bat` installation scripts.
 
 ## Set up your main repo from scratch
 
