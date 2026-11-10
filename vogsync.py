@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 VERSION = "1.0.0"
 PROG = CLI_NAME
@@ -77,11 +77,11 @@ def check_url(url: str) -> None:
         raise ToolError("Remote URL must be nonempty and must not begin with '-'.")
 
 
-def load_config(root: Path) -> Dict[str, str]:
-    """Read and validate the local project-to-URL mapping."""
+def load_settings(root: Path) -> Tuple[Dict[str, str], List[str]]:
+    """Read project URLs and optional top-level directory exclusions."""
     path = root / CONFIG_FILE_NAME
     if not path.exists():
-        return {}
+        return {}, []
     try:
         with path.open(encoding="utf-8") as handle:
             data = json.load(handle)
@@ -89,6 +89,11 @@ def load_config(root: Path) -> Dict[str, str]:
         raise ToolError("Could not read {}: {}".format(path, exc))
     if not isinstance(data, dict):
         raise ToolError("{} must contain a JSON object.".format(path))
+    excluded = data.pop("exclude", [])
+    if not isinstance(excluded, list) or any(not isinstance(name, str) for name in excluded):
+        raise ToolError("{}: exclude must be a list of top-level directory names.".format(path))
+    for name in excluded:
+        validate_project(name)
     result: Dict[str, str] = {}
     for key, value in data.items():
         if not isinstance(key, str) or not isinstance(value, str) or not value:
@@ -96,7 +101,15 @@ def load_config(root: Path) -> Dict[str, str]:
         validate_project(key)
         check_url(value)
         result[key] = value
-    return result
+    if set(excluded) & result.keys():
+        raise ToolError("{}: excluded directories cannot also have project Vogsphere URLs.".format(path))
+    return result, excluded
+
+
+
+def load_config(root: Path) -> Dict[str, str]:
+    """Read the local project-to-URL mapping."""
+    return load_settings(root)[0]
 
 
 def ensure_config_ignored(root: Path) -> None:
@@ -126,6 +139,12 @@ def ensure_config_ignored(root: Path) -> None:
 
 def save_config(root: Path, config: Dict[str, str]) -> None:
     """Save the local configuration with restrictive permissions on creation."""
+    _, excluded = load_settings(root)
+    if set(excluded) & config.keys():
+        raise ToolError("Remove the project from exclude before configuring its Vogsphere URL.")
+    settings: Dict[str, object] = dict(config)
+    if excluded:
+        settings["exclude"] = excluded
     ensure_config_ignored(root)
     path = root / CONFIG_FILE_NAME
     if path.is_symlink():
@@ -133,7 +152,7 @@ def save_config(root: Path, config: Dict[str, str]) -> None:
     try:
         fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(config, handle, indent=2, sort_keys=True)
+            json.dump(settings, handle, indent=2, sort_keys=True)
             handle.write("\n")
     except OSError as exc:
         raise ToolError("Could not write {}: {}".format(path, exc))
@@ -225,6 +244,8 @@ def command_remote(args: argparse.Namespace, root: Path) -> None:
     """Manage local project remote mappings."""
     config = load_config(root)
     if args.remote_command == "set":
+        if args.project == "exclude":
+            raise ToolError("'exclude' is reserved for directory exclusions in {}.".format(CONFIG_FILE_NAME))
         project_directory(root, args.project)
         check_url(args.url)
         config[args.project] = args.url
