@@ -293,8 +293,8 @@ def command_commit(args: argparse.Namespace, root: Path) -> None:
         say("Pushed to the configured upstream.", "success")
 
 
-def command_render(args: argparse.Namespace, root: Path) -> None:
-    """Split a project and deploy the resulting commit directly."""
+def command_deploy(args: argparse.Namespace, root: Path) -> None:
+    """Back up the main repo to its upstream, then deploy a project split."""
     project_directory(root, args.project)
     url = configured_url(load_config(root), args.project)
     check_url(url)
@@ -303,9 +303,9 @@ def command_render(args: argparse.Namespace, root: Path) -> None:
     git(["check-ref-format", "refs/heads/" + args.branch], root)
     require_head(root)
     if git(["status", "--porcelain"], root).stdout.strip():
-        raise ToolError("Working tree is dirty. Commit or stash changes before rendering.")
+        raise ToolError("Working tree is dirty. Commit or stash changes before deploying.")
+    tracking = upstream(root)
     if args.pull:
-        upstream(root)
         git(["pull", "--ff-only"], root)
         say("Updated from the configured upstream.", "success")
         project_directory(root, args.project)
@@ -315,7 +315,17 @@ def command_render(args: argparse.Namespace, root: Path) -> None:
         remote_head(root, url, args.branch)
         say("Dry run successful: split {} and reached the remote; nothing pushed.".format(commit), "success")
     else:
-        git(["push", "--force", "--", url, "{}:refs/heads/{}".format(commit, args.branch)], root)
+        say("Pushing main repo to {}...".format(tracking))
+        try:
+            push_upstream(root)
+        except ToolError as exc:
+            raise ToolError("Main repo push failed; Vogsphere was not updated.\n{}".format(exc))
+        say("Main repo pushed to {}.".format(tracking), "success")
+        try:
+            git(["push", "--force", "--", url, "{}:refs/heads/{}".format(commit, args.branch)], root)
+        except ToolError as exc:
+            raise ToolError("Main repo push succeeded, but Vogsphere deployment failed. "
+                            "Fix the destination/access problem and retry deploy.\n{}".format(exc))
         say("Deployed {} to remote branch {}.".format(args.project, args.branch), "success")
 
 
@@ -431,7 +441,7 @@ def command_doctor(root: Path, check_remote: bool, target_branch: str) -> bool:
             report("WARN", str(exc))
     dirty = check_git("Working-tree status readable", ["status", "--porcelain"])
     if dirty is not None:
-        report("WARN" if dirty else "OK", "Uncommitted changes; commit or stash before render." if dirty else "Working tree is clean.")
+        report("WARN" if dirty else "OK", "Uncommitted changes; commit or stash before deploy." if dirty else "Working tree is clean.")
     for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "BISECT_LOG"):
         path = git(["rev-parse", "--git-path", marker], root).stdout.strip()
         if (root / path).exists():
@@ -527,7 +537,7 @@ def command_doctor(root: Path, check_remote: bool, target_branch: str) -> bool:
             if head:
                 kind = git(["cat-file", "-t", "HEAD:" + project], root).stdout.strip()
                 if kind != "tree":
-                    raise ToolError("Project is not a committed directory; commit its files before rendering.")
+                    raise ToolError("Project is not a committed directory; commit its files before deploying.")
                 report("OK", "{}: committed project tree exists.".format(project))
         except ToolError as exc:
             report("ERROR", "{}: {}".format(project, exc))
@@ -539,7 +549,7 @@ def command_doctor(root: Path, check_remote: bool, target_branch: str) -> bool:
         try:
             key = destination_key(root, url)
             if key in main_repo_destinations:
-                report("ERROR", "{}: deployment points to the main repo! Set a separate Vogsphere URL; render force-pushes.".format(project))
+                report("ERROR", "{}: deployment points to the main repo! Set a separate Vogsphere URL; deploy force-pushes.".format(project))
             if key in destinations:
                 report("ERROR", "{} and {} share a deployment destination; use a separate repository per project.".format(destinations[key], project))
             destinations[key] = project
@@ -574,11 +584,12 @@ def build_parser() -> argparse.ArgumentParser:
     commit.add_argument("-m", "--message", required=True, help="Commit message.")
     commit.add_argument("-a", "--all", action="store_true", help="Include tracked modifications and deletions, limited to the active project when applicable.")
     commit.add_argument("-p", "--push", action="store_true", help="Push to the current branch's configured upstream.")
-    render = commands.add_parser("render", help="Split and deploy a project.")
-    render.add_argument("project")
-    render.add_argument("--pull", action="store_true", help="Fast-forward from the configured upstream first.")
-    render.add_argument("--dry-run", action="store_true", help="Split and check remote connectivity without pushing.")
-    render.add_argument("--branch", default="master", help="Target remote branch (default: master).")
+    deploy = commands.add_parser("deploy", help="Push the main repo to its upstream, then deploy a project.",
+                                 description="Push the main repo to its configured upstream (normally GitHub) without force, then force-push the project split to Vogsphere. Requires a branch with an upstream.")
+    deploy.add_argument("project")
+    deploy.add_argument("--pull", action="store_true", help="Fast-forward from the configured upstream first.")
+    deploy.add_argument("--dry-run", action="store_true", help="Split and check remote connectivity without pushing.")
+    deploy.add_argument("--branch", default="master", help="Target remote branch (default: master).")
     status = commands.add_parser("status", help="Show repository status and configured remotes.")
     status.add_argument("-r", "--remote", action="store_true", help="Check synchronization with Vogsphere remotes (requires network).")
     doctor = commands.add_parser("doctor", help="Diagnose Git health, project layout, and deployment configuration (read-only).")
@@ -596,8 +607,8 @@ def main() -> int:
             command_remote(args, root)
         elif args.command == "commit":
             command_commit(args, root)
-        elif args.command == "render":
-            command_render(args, root)
+        elif args.command == "deploy":
+            command_deploy(args, root)
         elif args.command == "status":
             command_status(root, args.remote)
         elif args.command == "doctor":
