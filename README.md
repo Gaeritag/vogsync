@@ -6,6 +6,8 @@
 
 `vogsync` permet de travailler dans un seul dépôt Git contenant plusieurs
 projets 42, puis de déployer chaque projet dans son dépôt Vogsphere séparé.
+Ce dépôt contenant tous les projets est appelé **main repo** ; ses répertoires
+de projet sont appelés **projects**, sans dépôt Git imbriqué.
 La commande `git subtree split` extrait l'historique du projet et place ses
 fichiers à la racine du dépôt de destination.
 
@@ -36,6 +38,20 @@ export PATH="$HOME/.local/bin:$PATH"
 
 Sur macOS, vous pouvez aussi lancer `python3 /chemin/vers/vogsync.py`.
 
+### Mise à jour
+
+Depuis votre clone de ce dépôt :
+
+```sh
+git pull --ff-only
+./update.sh
+```
+
+`update.sh` remplace atomiquement `~/.local/bin/vogsync` par le `vogsync.py`
+de ce clone, après vérification de sa syntaxe Python. Il nécessite une
+installation existante et refuse les liens symboliques. Il ne lance pas de
+pull automatiquement et ne modifie pas la configuration de vos projets.
+
 ### Configuration pas à pas
 
 #### 1. Créer le dépôt GitHub
@@ -62,7 +78,7 @@ avec un répertoire par projet directement à sa racine ; ne créez pas de dép�
 Git imbriqué dans chaque projet :
 
 ```text
-42-cursus/                # Dépôt monorepo relié à GitHub
+42-cursus/                # Main repo relié à GitHub
 ├── .git/
 ├── .gitignore
 ├── .vogsync.json         # URL Vogsphere locales, ignorées par Git
@@ -116,7 +132,7 @@ retirer de l'index : examinez également son historique.
 
 #### 5. Travailler chez soi et déployer au campus
 
-Chez vous, commitez et poussez vos changements vers le monorepo GitHub :
+Chez vous, commitez et poussez vos changements vers le main repo GitHub :
 
 ```sh
 cd libft
@@ -124,7 +140,7 @@ git add .
 vogsync commit -m 'Implement list functions' --push
 ```
 
-Sur un ordinateur du campus, clonez le monorepo, installez `vogsync`, puis :
+Sur un ordinateur du campus, clonez le main repo, installez `vogsync`, puis :
 
 ```sh
 cd 42-cursus
@@ -152,9 +168,11 @@ vogsync commit -m 'Fix a bug'        # Commit préfixé selon le dossier courant
 vogsync commit libft -a -m 'Fix'     # Modifications suivies de libft uniquement
 vogsync commit -m 'Fix' --push       # Puis pousser vers le suivi Git
 vogsync render libft --branch main   # Déployer sur une autre branche distante
-vogsync render libft --pull           # Mettre à jour le monorepo avant le split
+vogsync render libft --pull           # Mettre à jour le main repo avant le split
 vogsync status                       # État local, sans accès réseau
 vogsync status --remote              # Comparer chaque projet à master distant
+vogsync doctor                       # Diagnostiquer Git et l'architecture locale
+vogsync doctor --remote              # Vérifier aussi l'accès aux dépôts distants
 vogsync --help
 ```
 
@@ -170,9 +188,56 @@ avec `--dry-run`. `status --remote` vérifie les dépôts séquentiellement, ave
 un délai SSH de 2 secondes et une limite totale de 10 secondes par interrogation.
 Il compare toujours à `master`, même si vous déployez sur une autre branche.
 
+### Diagnostiquer la configuration
+
+```sh
+vogsync doctor
+vogsync doctor --remote --branch master
+```
+
+`doctor` affiche des résultats `OK`, `WARN` et `ERROR`, puis un bilan. Il vérifie
+Git et `git subtree`, l'intégrité des objets Git, le premier commit, l'identité,
+la branche et son suivi, les changements locaux et les opérations Git en cours.
+Il recherche les dépôts imbriqués et les sous-modules, vérifie les répertoires et
+les fichiers commités des projets, ainsi que la validité, les permissions et
+l'exclusion Git de `.vogsync.json`. Il signale aussi les destinations partagées
+entre projets ou correspondant au main repo, dangereuses avec le push forcé.
+Les répertoires commités sans URL produisent un avertissement ; cela peut être
+normal pour de la documentation ou des outils.
+
+L'identité Git affiche les valeurs effectives de `user.name` et `user.email`.
+Tous les projets sont vérifiés, même sans URL de déploiement. Les nouveaux
+répertoires non ignorés sont également détectés ; ils doivent être commités.
+Pour exclure un répertoire qui n'est pas un projet, éditez `.vogsync.json` :
+
+```json
+{
+  "exclude": ["other"],
+  "libft": "URL_VOGSPHERE_LIBFT",
+  "ft_printf": "URL_VOGSPHERE_FT_PRINTF"
+}
+```
+
+`exclude` est une clé réservée contenant des noms exacts de répertoires à la
+racine (pas de chemins ni de motifs). Les anciennes configurations restent
+valides et `remote set` préserve cette liste. Un répertoire exclu ne peut pas
+avoir d'URL de projet. L'exclusion retire les vérifications propres au projet,
+mais pas les contrôles de sécurité du main repo (dépôts imbriqués, index,
+conflits, intégrité). Elle ne modifie pas les règles Git ni les fichiers suivis.
+L'avertissement « No project Vogsphere URLs configured » concerne les URL
+Vogsphere des projets, pas le remote `origin` du main repo.
+
+Le diagnostic ne modifie aucun fichier ni aucune référence et ne fait ni split,
+ni fetch, ni push. Par défaut, il est hors ligne ; les comparaisons au suivi
+utilisent les références locales, potentiellement anciennes. `--remote` vérifie
+l'accès en lecture au remote du main repo et aux dépôts des projets (10 secondes
+maximum par interrogation), pas les droits de push ni la synchronisation.
+`--branch` choisit la branche des projets (`master` par défaut). Le code de sortie
+est `1` si une erreur est détectée, `0` sinon, même avec des avertissements.
+
 ### GitHub, origin et Vogsphere
 
-Le remote Git du monorepo et les URL Vogsphere sont distincts. `vogsync`
+Le remote Git du main repo et les URL Vogsphere sont distincts. `vogsync`
 interroge Git pour connaître le suivi de la branche courante ; il ne parcourt
 pas directement `.git`. Si ce suivi utilise `origin`, une modification avec
 `git remote set-url origin NOUVELLE_URL` sera prise en compte pour les prochains
@@ -181,7 +246,7 @@ change pas.
 
 En revanche, `render` utilise l'URL du projet dans `.vogsync.json` : modifiez-la
 avec `vogsync remote set PROJET NOUVELLE_URL_VOGSPHERE`. Ne pointez pas cette
-URL vers la branche de votre monorepo GitHub : le déploiement est forcé.
+URL vers la branche de votre main repo GitHub : le déploiement est forcé.
 
 ### Comprendre les notions Git
 
