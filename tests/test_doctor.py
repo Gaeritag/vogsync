@@ -139,7 +139,12 @@ class DoctorTests(unittest.TestCase):
         self.assertIn("Git operation in progress (CHERRY_PICK_HEAD)", output)
 
     def test_project_symlink_and_config_symlink(self):
-        (self.root / "alias").symlink_to(self.root / "libft", target_is_directory=True)
+        try:
+            (self.root / "alias").symlink_to(self.root / "libft", target_is_directory=True)
+        except OSError:
+            if os.name == "nt":
+                self.skipTest("Windows symlinks require Developer Mode or elevated privileges")
+            raise
         self.configure({"alias": str(self.destination)})
         config = self.root / vogsync.CONFIG_FILE_NAME
         saved = self.base / "config.json"
@@ -176,7 +181,10 @@ class DoctorTests(unittest.TestCase):
         healthy, output = self.diagnose()
         self.assertTrue(healthy, output)
         self.assertIn("is not ignored", output)
-        self.assertIn("chmod 600", output)
+        if os.name == "nt":
+            self.assertNotIn("chmod 600", output)
+        else:
+            self.assertIn("chmod 600", output)
 
     def test_duplicate_destinations(self):
         (self.root / "ft_printf").mkdir()

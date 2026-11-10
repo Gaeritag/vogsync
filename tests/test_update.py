@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 
+@unittest.skipIf(os.name == "nt", "POSIX shell installer tests")
 class UpdateTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="vogsync-update-test-")

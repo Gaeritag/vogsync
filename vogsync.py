@@ -6,13 +6,14 @@ CONFIG_FILE_NAME = ".vogsync.json"
 
 import argparse
 import json
+import ntpath
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
 from typing import Dict, List, Optional, Sequence, Tuple
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 VERSION = "1.0.0"
 PROG = CLI_NAME
@@ -25,7 +26,7 @@ class ToolError(Exception):
 
 def say(message: str, level: str = "info", error: bool = False) -> None:
     """Print a message with color when standard output is a terminal."""
-    if sys.stdout.isatty() and level in COLORS:
+    if os.name != "nt" and sys.stdout.isatty() and level in COLORS:
         message = COLORS[level] + message + "\033[0m"
     print(message, file=sys.stderr if error else sys.stdout)
 
@@ -34,7 +35,7 @@ def git(args: Sequence[str], root: Optional[Path] = None) -> subprocess.Complete
     """Run Git without a shell and provide a useful error on failure."""
     try:
         return subprocess.run(["git", *args], cwd=str(root) if root else None,
-                              check=True, capture_output=True, text=True)
+                              check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     except FileNotFoundError:
         raise ToolError("Git was not found. Install Git and make sure it is in PATH.")
     except subprocess.CalledProcessError as exc:
@@ -60,7 +61,7 @@ def active_project(root: Path) -> Optional[str]:
 
 def validate_project(project: str) -> None:
     """Accept only a single, non-special top-level directory name."""
-    if not project or project in (".", "..", ".git") or any(c in project for c in ("/", "\\", "\x00")):
+    if not project or project in (".", "..", ".git") or ntpath.splitdrive(project)[0] or any(c in project for c in ("/", "\\", "\x00")):
         raise ToolError("Project must be a single top-level directory name.")
 
 
@@ -117,7 +118,7 @@ def ensure_config_ignored(root: Path) -> None:
     """Add an exact root-level ignore rule unless one already applies."""
     try:
         subprocess.run(["git", "check-ignore", "-q", "--no-index", "--", CONFIG_FILE_NAME],
-                       cwd=str(root), check=True, capture_output=True, text=True)
+                       cwd=str(root), check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
         return
     except subprocess.CalledProcessError as exc:
         if exc.returncode != 1:
@@ -170,7 +171,7 @@ def current_branch(root: Path) -> Optional[str]:
     """Return the current branch, or None for a detached HEAD."""
     try:
         result = subprocess.run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
-                                cwd=str(root), check=True, capture_output=True, text=True)
+                                cwd=str(root), check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
         return result.stdout.strip()
     except subprocess.CalledProcessError as exc:
         if exc.returncode == 1:
@@ -229,7 +230,7 @@ def remote_head(root: Path, url: str, branch: str) -> Optional[str]:
     try:
         result = subprocess.run(
             ["git", "ls-remote", "--heads", "--", url, "refs/heads/" + branch],
-            cwd=str(root), check=True, capture_output=True, text=True, env=env,
+            cwd=str(root), check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
             timeout=10,
         )
     except subprocess.TimeoutExpired:
@@ -359,6 +360,9 @@ def command_status(root: Path, check_remote: bool) -> None:
 def destination_key(root: Path, url: str) -> str:
     """Compare common URL spellings, honoring Git's local URL rewrites."""
     url = git(["ls-remote", "--get-url", "--", url], root).stdout.strip()
+    # Drive-letter paths are local destinations, not SCP-style host:path URLs.
+    if re.match(r"^[A-Za-z]:[/\\]", url) or url.startswith("\\\\"):
+        return ntpath.normcase(ntpath.normpath(url))
     if "://" in url:
         parsed = urlsplit(url)
         if parsed.scheme != "file":
@@ -367,11 +371,15 @@ def destination_key(root: Path, url: str) -> str:
             if parsed.port is not None and parsed.port != default_ports.get(parsed.scheme):
                 host += ":{}".format(parsed.port)
             return "{}:{}".format(host, parsed.path.lstrip("/").rstrip("/").removesuffix(".git"))
-        url = parsed.path
+        url = unquote(parsed.path)
+        if parsed.netloc and parsed.netloc.lower() != "localhost":
+            return ntpath.normcase(ntpath.normpath("//" + parsed.netloc + url))
+        if re.match(r"^/[A-Za-z]:/", url):
+            return ntpath.normcase(ntpath.normpath(url[1:]))
     elif re.match(r"^(?:[^/@:]+@)?[^/:]+:", url):
         host, path = url.split(":", 1)
         return "{}:{}".format(host.split("@")[-1].lower(), path.lstrip("/").rstrip("/").removesuffix(".git"))
-    return str((root / url).resolve())
+    return os.path.normcase(str((root / url).resolve()))
 
 
 def command_doctor(root: Path, check_remote: bool, target_branch: str) -> bool:
@@ -394,7 +402,7 @@ def command_doctor(root: Path, check_remote: bool, target_branch: str) -> bool:
     print("Main repo: {}\n".format(root))
     check_git("Git available", ["--version"])
     # The help command does not run a split or create Git objects.
-    probe = subprocess.run(["git", "subtree", "-h"], cwd=str(root), capture_output=True, text=True)
+    probe = subprocess.run(["git", "subtree", "-h"], cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace")
     if probe.returncode in (0, 129) and "git subtree" in probe.stdout + probe.stderr:
         report("OK", "git subtree available")
     else:
@@ -468,14 +476,15 @@ def command_doctor(root: Path, check_remote: bool, target_branch: str) -> bool:
         tracked = git(["ls-files", "--", CONFIG_FILE_NAME], root).stdout.strip()
         if tracked:
             report("ERROR", "{} is tracked; review its history and remove it from the index to keep URLs local.".format(CONFIG_FILE_NAME))
-        ignored = subprocess.run(["git", "check-ignore", "-q", "--no-index", "--", CONFIG_FILE_NAME], cwd=str(root), capture_output=True, text=True)
+        ignored = subprocess.run(["git", "check-ignore", "-q", "--no-index", "--", CONFIG_FILE_NAME], cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace")
         if ignored.returncode == 1:
             report("WARN", "{} is not ignored; add /{} to .gitignore.".format(CONFIG_FILE_NAME, CONFIG_FILE_NAME))
         elif ignored.returncode != 0:
             report("ERROR", "Could not check configuration ignore rules: {}".format(ignored.stderr.strip()))
         elif not tracked:
             report("OK", "Local configuration is ignored and untracked.")
-        if config_path.stat().st_mode & 0o077:
+        # Windows access is controlled by ACLs, not POSIX permission bits.
+        if os.name != "nt" and config_path.stat().st_mode & 0o077:
             report("WARN", "{} is accessible to other users; consider chmod 600 {}.".format(CONFIG_FILE_NAME, CONFIG_FILE_NAME))
 
     git_dir = git(["rev-parse", "--absolute-git-dir"], root).stdout.strip()
@@ -505,7 +514,7 @@ def command_doctor(root: Path, check_remote: bool, target_branch: str) -> bool:
     for path in root.iterdir():
         if not path.name.startswith(".") and path.is_dir():
             ignored = subprocess.run(["git", "check-ignore", "-q", "--", path.name],
-                                     cwd=str(root), capture_output=True, text=True)
+                                     cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace")
             if ignored.returncode == 1:
                 projects.add(path.name)
     for project in sorted(excluded):
