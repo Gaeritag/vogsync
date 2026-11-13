@@ -60,7 +60,7 @@ Si le lanceur `py` n'est pas disponible, utilisez `python install.py install`.
 Les exemples suivants utilisent la syntaxe d'un shell POSIX ; sous Windows,
 utilisez PowerShell (ou adaptez les guillemets simples en guillemets doubles
 dans cmd.exe). Les droits de `.vogsync.json` sont gérés par les ACL Windows,
-pas par `chmod` ; le fichier reste local et ignoré par Git.
+pas par `chmod` ; vérifiez les URL avant de commiter le fichier dans un dépôt privé.
 
 ### Mise à jour
 
@@ -113,8 +113,7 @@ Git imbriqué dans chaque projet :
 ```text
 42-cursus/                # Main repo relié à GitHub
 ├── .git/
-├── .gitignore
-├── .vogsync.json         # URL Vogsphere locales, ignorées par Git
+├── .vogsync.json         # URL Vogsphere à suivre dans Git
 ├── libft/
 │   ├── Makefile
 │   └── srcs/
@@ -151,17 +150,17 @@ vogsync remote set libft 'URL_VOGSPHERE_LIBFT'
 vogsync remote set ft_printf 'URL_VOGSPHERE_FT_PRINTF'
 vogsync remote list
 
-# Vérifiez puis commitez la règle .gitignore ajoutée si nécessaire.
-git diff -- .gitignore
-git add .gitignore
-git commit -m 'Ignore local Vogsphere configuration'
+# Vérifiez puis commitez les URL avec le monorepo privé.
+git add .vogsync.json
+git commit -m 'Track Vogsphere configuration'
 git push
 ```
 
-Les URL sont stockées localement dans `.vogsync.json`, ignoré par Git ; ne
-committez pas ce fichier. Reconfigurez les URL sur chaque ordinateur. Si le
-fichier est déjà suivi par Git, une règle `.gitignore` ne suffit pas à le
-retirer de l'index : examinez également son historique.
+Les URL sont stockées dans `.vogsync.json` à la racine du monorepo. Le fichier
+n'est pas ignoré par défaut : commitez-le pour partager la configuration entre
+vos ordinateurs. Vérifiez les URL avant de les publier et gardez le dépôt privé.
+Si une ancienne règle `.gitignore` ignore le fichier, retirez cette règle avant
+de l'ajouter à Git.
 
 #### 5. Travailler chez soi et déployer au campus
 
@@ -178,7 +177,6 @@ Sur un ordinateur du campus, clonez le main repo, installez `vogsync`, puis :
 ```sh
 cd 42-cursus
 git pull
-vogsync remote set libft 'URL_VOGSPHERE_LIBFT'
 vogsync deploy libft --dry-run
 vogsync deploy libft
 ```
@@ -276,7 +274,7 @@ Git et `git subtree`, l'intégrité des objets Git, le premier commit, l'identit
 la branche et son suivi, les changements locaux et les opérations Git en cours.
 Il recherche les dépôts imbriqués et les sous-modules, vérifie les répertoires et
 les fichiers commités des projets, ainsi que la validité, les permissions et
-l'exclusion Git de `.vogsync.json`. Il signale aussi les destinations partagées
+le fichier `.vogsync.json`. Il signale aussi les destinations partagées
 entre projets ou correspondant au main repo, dangereuses avec le push forcé.
 Les répertoires commités sans URL produisent un avertissement ; cela peut être
 normal pour de la documentation ou des outils.
@@ -405,7 +403,7 @@ If the `py` launcher is unavailable, use `python install.py install`.
 The examples below use POSIX shell syntax. On Windows, use PowerShell, or replace
 single quotes with double quotes in cmd.exe; adapt shell-specific commands such
 as `mkdir -p`. Configuration access is controlled by Windows ACLs, not `chmod`;
-`.vogsync.json` still stays local and ignored by Git.
+Review the URLs and commit `.vogsync.json` to your private main repo.
 
 ## Updating
 
@@ -462,8 +460,7 @@ project**, not a separate nested Git repository for each project:
 ```text
 42-cursus/                 # Main repo, connected to GitHub as origin
 ├── .git/                  # Git's local repository data
-├── .gitignore
-├── .vogsync.json          # Local, ignored Vogsphere URL mappings
+├── .vogsync.json          # Vogsphere URL mappings to track in Git
 ├── libft/
 │   ├── Makefile
 │   └── srcs/
@@ -501,15 +498,15 @@ vogsync remote set libft 'YOUR_LIBFT_VOGSPHERE_URL'
 vogsync remote set ft_printf 'YOUR_FT_PRINTF_VOGSPHERE_URL'
 vogsync remote list
 
-# Review the ignore rule added by the first remote set, then commit it.
-git diff -- .gitignore
-git add .gitignore
-git commit -m 'Ignore local Vogsphere configuration'
+# Review the URLs, then commit the configuration to your private monorepo.
+git add .vogsync.json
+git commit -m 'Track Vogsphere configuration'
 git push
 ```
 
-`.vogsync.json` is intentionally local and ignored, so repeat the `remote set`
-commands on each computer where you want to deploy. Do not commit that file.
+`.vogsync.json` is not ignored by default. Commit it to share the mappings across
+computers. Review the URLs before publishing and keep the monorepo private. If
+an older `.gitignore` rule ignores the file, remove that rule before adding it.
 
 ### 5. Work at home and deploy from campus
 
@@ -522,12 +519,11 @@ vogsync commit -m 'Implement list functions' --push
 ```
 
 On a campus computer, clone the same GitHub main repo, install `vogsync`, and
-configure the project URL locally as in step 4. After pulling your main repo
+use the project URL from the tracked configuration. After pulling your main repo
 changes, check and deploy the project:
 
 ```sh
 git pull
-vogsync remote set libft 'YOUR_LIBFT_VOGSPHERE_URL'
 vogsync deploy libft --dry-run
 vogsync deploy libft
 ```
@@ -557,14 +553,13 @@ Suppose your main repo contains `libft/` and `ft_printf/`:
 ```sh
 cd ~/42-cursus
 
-# Store the project's Vogsphere URL locally.
+# Store the project's Vogsphere URL in the monorepo configuration.
 vogsync remote set libft 'git@vogsphere.example:libft'
 vogsync remote list
 
-# The first remote set may update .gitignore. Review and commit it.
-git diff -- .gitignore
-git add .gitignore
-git commit -m 'Ignore local Vogsphere configuration'
+# Review and commit the configuration.
+git add .vogsync.json
+git commit -m 'Track Vogsphere configuration'
 
 # Work on the project and create a prefixed main repo commit.
 cd libft
@@ -590,10 +585,9 @@ vogsync remote list
 ```
 
 Mappings are stored as a JSON object in `.vogsync.json` at the repository root.
-The first `remote set` adds an ignore rule if needed. The file is created with
-permissions `0600` on POSIX (Windows uses inherited ACLs); existing file permissions are not changed. If the file was
-already tracked by Git, an ignore rule alone will not untrack it: inspect its
-history and remove it from the index as appropriate.
+`remote set` does not change `.gitignore`; add the file to Git yourself. The file
+is created with permissions `0600` on POSIX (Windows uses inherited ACLs);
+existing file permissions are not changed.
 
 ### Commit changes
 
@@ -706,7 +700,7 @@ Run this from the main repo root or any directory inside it. Results are marked
 - Git identity (including the configured name and email), branch/upstream configuration, cached ahead/behind counts,
   uncommitted changes, and Git operations in progress.
 - Nested repositories (including `.git` files), submodules/gitlinks, and merge conflicts.
-- Configuration validity, ignore rules, tracked configuration, and file permissions.
+- Configuration validity and permissions for untracked configuration files.
 - All discovered projects, whether or not they have Vogsphere URLs: existing,
   non-symlink, top-level directories with committed trees. Committed directories,
   configured projects, and new non-hidden, non-ignored directories are checked.
@@ -723,7 +717,7 @@ project destinations; without a URL, it can only check a project locally.
 
 #### Exclude non-project directories
 
-Edit the local `.vogsync.json`, keeping any existing project URLs:
+Edit the tracked `.vogsync.json`, keeping any existing project URLs:
 
 ```json
 {

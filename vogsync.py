@@ -110,44 +110,18 @@ def load_settings(root: Path) -> Tuple[Dict[str, str], List[str]]:
 
 
 def load_config(root: Path) -> Dict[str, str]:
-    """Read the local project-to-URL mapping."""
+    """Read the project-to-URL mapping."""
     return load_settings(root)[0]
 
 
-def ensure_config_ignored(root: Path) -> None:
-    """Add an exact root-level ignore rule unless one already applies."""
-    try:
-        subprocess.run(["git", "check-ignore", "-q", "--no-index", "--", CONFIG_FILE_NAME],
-                       cwd=str(root), check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
-        return
-    except subprocess.CalledProcessError as exc:
-        if exc.returncode != 1:
-            raise ToolError("Could not check ignore rules: {}".format((exc.stderr or "git check-ignore failed").strip()))
-    except OSError as exc:
-        raise ToolError("Could not check ignore rules: {}".format(exc))
-    path = root / ".gitignore"
-    try:
-        existing = path.read_text(encoding="utf-8") if path.exists() else ""
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(("\n" if existing and not existing.endswith("\n") else "") + "/" + CONFIG_FILE_NAME + "\n")
-    except OSError as exc:
-        raise ToolError("Could not update {}: {}".format(path, exc))
-    say("Added {} to .gitignore; review and commit the change.".format(CONFIG_FILE_NAME), "warning")
-    # An ignore rule does not stop Git from tracking an already indexed file.
-    tracked = git(["ls-files", "--", CONFIG_FILE_NAME], root).stdout.strip()
-    if tracked:
-        say("{} is already tracked; remove it from the index to keep it local.".format(CONFIG_FILE_NAME), "warning")
-
-
 def save_config(root: Path, config: Dict[str, str]) -> None:
-    """Save the local configuration with restrictive permissions on creation."""
+    """Save the configuration with restrictive permissions on creation."""
     _, excluded = load_settings(root)
     if set(excluded) & config.keys():
         raise ToolError("Remove the project from exclude before configuring its Vogsphere URL.")
     settings: Dict[str, object] = dict(config)
     if excluded:
         settings["exclude"] = excluded
-    ensure_config_ignored(root)
     path = root / CONFIG_FILE_NAME
     if path.is_symlink():
         raise ToolError("Refusing to overwrite symlink: {}".format(path))
@@ -243,7 +217,7 @@ def remote_head(root: Path, url: str, branch: str) -> Optional[str]:
 
 
 def command_remote(args: argparse.Namespace, root: Path) -> None:
-    """Manage local project remote mappings."""
+    """Manage project remote mappings."""
     config = load_config(root)
     if args.remote_command == "set":
         if args.project == "exclude":
@@ -481,20 +455,13 @@ def command_doctor(root: Path, check_remote: bool, target_branch: str) -> bool:
     except ToolError as exc:
         report("ERROR", str(exc))
     if config_path.is_symlink():
-        report("ERROR", "{} is a symlink; use a regular local configuration file.".format(CONFIG_FILE_NAME))
+        report("ERROR", "{} is a symlink; use a regular configuration file.".format(CONFIG_FILE_NAME))
     if config_path.exists():
-        tracked = git(["ls-files", "--", CONFIG_FILE_NAME], root).stdout.strip()
-        if tracked:
-            report("ERROR", "{} is tracked; review its history and remove it from the index to keep URLs local.".format(CONFIG_FILE_NAME))
-        ignored = subprocess.run(["git", "check-ignore", "-q", "--no-index", "--", CONFIG_FILE_NAME], cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace")
-        if ignored.returncode == 1:
-            report("WARN", "{} is not ignored; add /{} to .gitignore.".format(CONFIG_FILE_NAME, CONFIG_FILE_NAME))
-        elif ignored.returncode != 0:
-            report("ERROR", "Could not check configuration ignore rules: {}".format(ignored.stderr.strip()))
-        elif not tracked:
-            report("OK", "Local configuration is ignored and untracked.")
+        report("OK", "Project configuration file exists.")
+        # Git does not preserve restrictive permissions on tracked files.
         # Windows access is controlled by ACLs, not POSIX permission bits.
-        if os.name != "nt" and config_path.stat().st_mode & 0o077:
+        tracked = git(["ls-files", "--", CONFIG_FILE_NAME], root).stdout.strip()
+        if not tracked and os.name != "nt" and config_path.stat().st_mode & 0o077:
             report("WARN", "{} is accessible to other users; consider chmod 600 {}.".format(CONFIG_FILE_NAME, CONFIG_FILE_NAME))
 
     git_dir = git(["rev-parse", "--absolute-git-dir"], root).stdout.strip()

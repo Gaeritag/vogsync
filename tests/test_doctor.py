@@ -34,12 +34,13 @@ class DoctorTests(unittest.TestCase):
         self.git("config", "user.email", "doctor@example.invalid")
         (self.root / "libft").mkdir()
         (self.root / "libft" / "Makefile").write_text("all:\n\t@true\n")
-        (self.root / ".gitignore").write_text("/.vogsync.json\n")
         self.git("add", ".")
         self.git("commit", "-m", "Initial projects")
         self.destination = self.base / "libft.git"
         subprocess.run(["git", "init", "--bare", str(self.destination)], check=True, capture_output=True)
         self.configure({"libft": str(self.destination)})
+        self.git("add", vogsync.CONFIG_FILE_NAME)
+        self.git("commit", "-m", "Track project configuration")
 
     def git(self, *args):
         return subprocess.run(["git", *args], cwd=self.root, check=True,
@@ -169,18 +170,21 @@ class DoctorTests(unittest.TestCase):
         self.assertIn("git subtree is unavailable", output)
         self.assertIn("Diagnosis:", output)
 
-    def test_tracked_config_is_error_even_if_ignored(self):
-        self.git("add", "--force", vogsync.CONFIG_FILE_NAME)
+    def test_tracked_config_has_no_tracking_warning(self):
         healthy, output = self.diagnose()
-        self.assertFalse(healthy)
-        self.assertIn("is tracked", output)
+        self.assertTrue(healthy, output)
+        self.assertNotIn("is tracked", output)
+        self.assertNotIn("is not ignored", output)
 
-    def test_config_permissions_and_ignore_rule(self):
-        (self.root / ".gitignore").write_text("")
+    def test_config_permissions(self):
         (self.root / vogsync.CONFIG_FILE_NAME).chmod(0o644)
         healthy, output = self.diagnose()
         self.assertTrue(healthy, output)
-        self.assertIn("is not ignored", output)
+        self.assertNotIn("is not ignored", output)
+        self.assertNotIn("chmod 600", output)
+        self.git("rm", "--cached", vogsync.CONFIG_FILE_NAME)
+        healthy, output = self.diagnose()
+        self.assertTrue(healthy, output)
         if os.name == "nt":
             self.assertNotIn("chmod 600", output)
         else:

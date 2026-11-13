@@ -34,7 +34,6 @@ class DeployTests(unittest.TestCase):
         self.git("config", "user.email", "deploy@example.invalid")
         (self.root / "libft").mkdir()
         (self.root / "libft" / "code.c").write_text("initial\n")
-        (self.root / ".gitignore").write_text("/.vogsync.json\n")
         self.git("add", ".")
         self.git("commit", "-m", "Initial projects")
         self.github = self.base / "github.git"
@@ -42,9 +41,11 @@ class DeployTests(unittest.TestCase):
         for destination in (self.github, self.vogsphere):
             self.git("init", "--bare", str(destination))
         self.git("remote", "add", "origin", str(self.github))
+        self.configure(self.vogsphere)
+        self.git("add", ".vogsync.json")
+        self.git("commit", "-m", "Track project configuration")
         self.git("push", "-u", "origin", "main")
         self.initial = self.git("rev-parse", "HEAD")
-        self.configure(self.vogsphere)
         (self.root / "libft" / "code.c").write_text("updated\n")
         (self.root / "README.md").write_text("whole monorepo\n")
         self.git("add", ".")
@@ -134,6 +135,8 @@ class DeployTests(unittest.TestCase):
 
     def test_vogsphere_failure_reports_that_main_repo_was_pushed(self):
         self.configure(self.base / "missing-vogsphere.git")
+        self.git("add", ".vogsync.json")
+        self.git("commit", "-m", "Change project destination")
         with self.assertRaisesRegex(vogsync.ToolError, "Main repo push succeeded, but Vogsphere deployment failed"):
             self.deploy()
         self.assertEqual(self.git("rev-parse", "main", root=self.github), self.git("rev-parse", "HEAD"))
