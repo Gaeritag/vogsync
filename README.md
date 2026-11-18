@@ -7,13 +7,15 @@
 `vogsync` permet de travailler dans un seul dépôt Git contenant plusieurs
 projets 42, puis de déployer chaque projet dans son dépôt Vogsphere séparé.
 Ce dépôt contenant tous les projets est appelé **main repo** ; ses répertoires
-de projet sont appelés **projects**, sans dépôt Git imbriqué.
+de projet sont appelés **projects** : répertoires ordinaires ou sous-modules Git
+de groupe explicitement enregistrés à la racine (voir ci-dessous).
 La commande `git subtree split` extrait l'historique du projet et place ses
 fichiers à la racine du dépôt de destination.
 
 ### Prérequis
 
 - Linux, macOS ou Windows, Python 3.9 ou plus récent, Git et `git subtree`.
+  Les commits de pointeur de groupe nécessitent Git 2.36+ (`git hook run`).
 - Un compte GitHub et l'accès aux URL Vogsphere fournies par votre école.
 - Une connexion et les droits d'accès aux dépôts concernés. Vogsphere peut
   n'être accessible que depuis le campus.
@@ -116,7 +118,7 @@ mkdir -p libft ft_printf
 
 Remplacez l'URL et l'identité par les vôtres. Utilisez **un seul dépôt Git**,
 avec un répertoire par projet directement à sa racine ; ne créez pas de dépôt
-Git imbriqué dans chaque projet :
+Git imbriqué dans chaque projet (sauf sous-module de groupe enregistré) :
 
 ```text
 42-cursus/                # Main repo relié à GitHub
@@ -266,7 +268,7 @@ vogsync doctor --remote              # Vérifier aussi l'accès aux dépôts dis
 vogsync --help
 ```
 
-Sans `-a`, `commit` inclut **tout l'index**, y compris les changements préparés
+Pour un projet ordinaire, sans `-a`, `commit` inclut **tout l'index**, y compris les changements préparés
 hors du projet. Avec `-a` et un projet actif ou indiqué, le commit est limité à
 ce projet et les autres changements indexés restent dans l'index ; les nouveaux
 fichiers non suivis ne sont pas ajoutés automatiquement. À la racine sans nom de
@@ -293,7 +295,7 @@ vogsync doctor --remote --branch master
 `doctor` affiche des résultats `OK`, `WARN` et `ERROR`, puis un bilan. Il vérifie
 Git et `git subtree`, l'intégrité des objets Git, le premier commit, l'identité,
 la branche et son suivi, les changements locaux et les opérations Git en cours.
-Il recherche les dépôts imbriqués et les sous-modules, vérifie les répertoires et
+Il rejette les dépôts imbriqués accidentels et les sous-modules mal enregistrés, vérifie les répertoires et
 les fichiers commités des projets, ainsi que la validité, les permissions et
 le fichier `.vogsync.json`. Il signale aussi les destinations partagées
 entre projets ou correspondant au main repo, dangereuses avec le push forcé.
@@ -329,6 +331,84 @@ l'accès en lecture au remote du main repo et aux dépôts des projets (10 secon
 maximum par interrogation), pas les droits de push ni la synchronisation.
 `--branch` choisit la branche des projets (`master` par défaut). Le code de sortie
 est `1` si une erreur est détectée, `0` sinon, même avec des avertissements.
+
+### Projets de groupe (sous-modules)
+
+Un projet collaboratif peut être un **sous-module Git enregistré directement à
+la racine**. `.gitmodules` contient son chemin et son URL de collaboration ;
+`.vogsync.json` garde uniquement l'URL Vogsphere et les exclusions existantes.
+Les dépôts imbriqués non enregistrés, chemins imbriqués, liens symboliques et
+sous-modules à l'intérieur d'un groupe ne sont pas pris en charge.
+
+```sh
+# Nouveau clone : nécessite l'accès au main repo ET aux dépôts collaboratifs.
+git clone --recurse-submodules git@github.com:Gaeritag/42-cursus.git
+cd 42-cursus
+# Clone existant : initialisation explicite, jamais automatique par vogsync.
+git submodule update --init -- push_swap
+# L'initialisation détache souvent HEAD : choisissez la branche de collaboration.
+git -C push_swap switch main
+# Si nécessaire, créez la branche depuis origin/main :
+# git -C push_swap switch -c main --track origin/main
+# Configurez identité et suivi dans chaque dépôt si nécessaire.
+vogsync remote set push_swap 'URL_VOGSPHERE_FOURNIE_PAR_VOUS'
+vogsync add push_swap
+vogsync commit push_swap -m 'fix: correct sorting'
+```
+
+Pour enregistrer un nouveau groupe, utilisez explicitement `git submodule add
+URL_COLLABORATION push_swap`, puis commitez `.gitmodules` et le gitlink dans le
+parent avant d'utiliser vogsync. Ne mettez jamais l'URL collaborative dans la
+configuration de déploiement.
+
+`add`, `diff`, `log`, `restore` et `commit` opèrent **dans le groupe** ; depuis
+son checkout (même un sous-répertoire), le contexte parent est retrouvé malgré
+le fichier `.git`. Sans `-a`, seul l'index du groupe est commité ; `-a` inclut
+ses modifications/suppressions suivies, jamais ses fichiers non suivis.
+Les précautions de `restore` restent les mêmes : sans `--staged`, il détruit
+les changements non préparés ; aucune restauration/initialisation n'est implicite.
+
+Par défaut, `commit` crée ensuite un commit parent **limité au pointeur**, nommé
+`chore(push_swap): update group repository revision`. Les changements parent
+préparés ou non préparés restent intacts. Un pointeur déjà préparé qui serait
+remplacé bloque le commit : inspectez `git diff --cached -- push_swap`, puis
+retirez-le explicitement de l'index si souhaité. Les deux dépôts sont contrôlés
+avant le premier commit (branche, identité, conflits, opérations Git, pointeur ;
+suivis aussi avec `--push`). Les hooks parent standard de commit sont exécutés
+sur un index isolé ; s'ils ajoutent d'autres fichiers, le commit parent est refusé.
+
+- `commit push_swap --no-pin -m 'fix: sorting'` crée uniquement le commit de groupe.
+- `pin push_swap` enregistre son HEAD actuel, y compris après un commit Git direct.
+  Il ne pousse rien et ne vérifie pas sa disponibilité distante. Il accepte un
+  pointeur déjà préparé identique à HEAD ; déjà enregistré, il ne fait rien.
+- Sans `--push`, tout reste local. **Pousser le parent seul peut publier un
+  pointeur vers un commit inaccessible** : poussez d'abord le groupe.
+- Avec `--push`, vogsync pousse normalement le groupe vers son suivi **avant**
+  le parent vers son suivi, sans forcer. Avec `--no-pin --push`, seul le groupe
+  est poussé, et le pointeur parent reste non enregistré.
+
+Ce n'est **pas atomique**. Si le commit parent échoue après le commit de groupe,
+celui-ci est conservé : corrigez le hook/l'identité/le conflit, inspectez
+`vogsync status push_swap`, puis `vogsync pin push_swap`. Si le groupe est poussé
+mais pas le parent, réconciliez explicitement le parent puis `git push` depuis
+le parent ; aucun pull, reset, rebase ou rollback automatique n'est effectué.
+`status` et `doctor` distinguent l'état interne du groupe, sa branche/son suivi,
+HEAD, le pointeur de l'index parent et le pointeur du commit parent. Ils restent
+hors ligne sans `--remote`, sans initialiser, fetcher ou changer de branche.
+
+Le déploiement de groupe utilise **son historique directement**, sans subtree.
+Il exige les deux dépôts initialisés et propres, des branches avec suivis, et
+un pointeur parent commité (et indexé) identique au HEAD du groupe. Un HEAD de
+groupe détaché est refusé pour commit/pin/push/deploy : sélectionnez une branche.
+L'ordre réel est : push normal du groupe, push normal du parent, puis **push
+forcé uniquement vers Vogsphere**. Un échec arrête la suite et indique les
+destinations déjà poussées ; il faut les droits de push sur les trois dépôts.
+Une URL Vogsphere correspondant au parent ou au groupe (y compris les formes
+SSH/HTTPS et réécritures courantes) est refusée ; vérifiez aussi les alias serveur.
+`deploy push_swap --dry-run` ne pousse, ne commite, n'initialise et ne modifie
+aucun pointeur/branche. `--pull` est **refusé pour les groupes**, même en dry-run :
+mettez les deux dépôts à jour explicitement, choisissez la branche et épinglez
+le HEAD relu. Le comportement `--pull` des projets ordinaires est inchangé.
 
 ### GitHub, origin et Vogsphere
 
@@ -369,7 +449,8 @@ URL vers la branche de votre main repo GitHub : le déploiement est forcé.
 
 `vogsync` manages project-specific Vogsphere deployments from a **main repo**:
 one Git repository containing all your **projects** as top-level directories.
-Projects are not nested Git repositories; each has a separate deployment repo.
+Projects are regular directories or explicitly registered top-level group
+submodules; each has a separate deployment repo.
 It uses `git subtree split` to extract a project's committed history and put its
 files at the root of the destination repository. The main repo stays unchanged
 by the deployment, apart from the Git objects created by the split.
@@ -377,6 +458,7 @@ by the deployment, apart from the Git objects created by the split.
 ## Requirements
 
 - Linux, macOS or Windows, with Python 3.9 or newer and Git, including `git subtree`.
+  Group pointer commits require Git 2.36+ (`git hook run`).
 - A main repo with projects as top-level directories.
 - Network access and the appropriate credentials for your Git remotes. Vogsphere
   may only be reachable from campus.
@@ -483,7 +565,8 @@ Replace the clone URL and Git identity with your own. Git does not track empty
 directories, so add actual project files before committing them.
 
 The expected layout is one Git repository with a **top-level directory per
-project**, not a separate nested Git repository for each project:
+project**, not an accidental nested Git repository (registered group submodules
+are the exception):
 
 ```text
 42-cursus/                 # Main repo, connected to GitHub as origin
@@ -633,7 +716,7 @@ vogsync commit libft -a -m 'Fix edge cases'
 vogsync commit -m 'Finish tests' --push
 ```
 
-The active project is the top-level directory containing the current working
+For regular projects, the active project is the top-level directory containing the current working
 directory. At the repository root, omitting the project creates an unprefixed
 commit with a warning. `-a` includes tracked modifications and deletions, not
 new untracked files. With an active or specified project, `-a` limits the commit
@@ -719,7 +802,8 @@ Without a project, `status` still shows the whole repository. The other project
 Git commands use the current project's directory when no name is supplied, and
 require a name at the repository root. They only affect the selected project;
 `restore` without `--staged` **discards its unstaged changes**. These commands
-operate on the main repo, not on the separate Vogsphere repository.
+operate on the main repo for regular projects, or inside registered group
+repositories, never on the separate Vogsphere repository.
 
 The default status does not contact the network. With `--remote`, each remote
 check uses a two-second SSH connection timeout and a ten-second overall
@@ -741,10 +825,10 @@ Run this from the main repo root or any directory inside it. Results are marked
 - Git and `git subtree` availability, Git object integrity, and an initial commit.
 - Git identity (including the configured name and email), branch/upstream configuration, cached ahead/behind counts,
   uncommitted changes, and Git operations in progress.
-- Nested repositories (including `.git` files), submodules/gitlinks, and merge conflicts.
+- Accidental nested repositories (including `.git` files), malformed submodule/gitlink registrations, and merge conflicts.
 - Configuration validity and permissions for untracked configuration files.
 - All discovered projects, whether or not they have Vogsphere URLs: existing,
-  non-symlink, top-level directories with committed trees. Committed directories,
+  non-symlink, top-level directories with committed trees or registered group gitlinks. Committed directories,
   configured projects, and new non-hidden, non-ignored directories are checked.
 - Shared project destinations and project URLs pointing back to the main repo,
   including common SSH/HTTPS spellings and Git URL rewrites. These checks catch
@@ -789,6 +873,107 @@ deployed history. A diagnosis cannot guarantee a later deployment will succeed.
 
 Exit status is `1` when errors are found and `0` otherwise, including warnings.
 Doctor reports problems but never fixes them automatically.
+
+### Group projects (Git submodules)
+
+A collaboration repository can be a **properly registered top-level submodule**.
+`.gitmodules` is the source of truth for its path and collaboration clone URL.
+`.vogsync.json` still stores only separate Vogsphere destinations and exclusions;
+old configurations remain valid. Unregistered nested repositories, nested paths,
+symlinks and submodules inside groups remain unsupported.
+
+```sh
+git clone --recurse-submodules git@github.com:Gaeritag/42-cursus.git
+cd 42-cursus
+# Existing clone: explicitly initialize; vogsync never initializes for you.
+git submodule update --init -- push_swap
+# Submodule initialization commonly leaves HEAD detached. Select your branch:
+git -C push_swap switch main
+# Or, if no local branch exists:
+# git -C push_swap switch -c main --track origin/main
+vogsync remote set push_swap 'YOUR_SEPARATE_VOGSPHERE_URL'
+vogsync add push_swap
+vogsync commit push_swap -m 'fix: correct sorting'
+```
+
+To register a new group, explicitly run `git submodule add COLLABORATION_URL
+push_swap` and commit `.gitmodules` and the gitlink in the parent first. You need
+clone/read permission on both main and collaboration repositories, effective Git
+identity in both, and configured branch upstreams for publishing. Do not infer a
+Vogsphere URL from `.gitmodules` or store collaboration URLs in `.vogsync.json`.
+
+`add`, `diff`, `log`, `restore` and `commit` route to the group repository.
+Invoking inside its checkout (including subdirectories) resolves back to the
+parent monorepo even though `.git` is a file. Group `commit` without `-a` includes
+all of the **group's** staged changes, not the parent index. With `-a`, tracked
+modifications/deletions in the group are included, never untracked files.
+`restore` still discards unstaged changes unless `--staged` is used; no changes
+are ever discarded implicitly.
+
+By default, committing a group automatically creates **two separate commits**:
+
+1. The group commit, using your message unchanged.
+2. A parent commit containing **only the gitlink update**, with message
+   `chore(push_swap): update group repository revision`.
+
+Unrelated parent staged/unstaged work and index entries are preserved. An
+already-staged pointer that would be overwritten blocks the operation before
+the group commit: inspect `git diff --cached -- push_swap` and explicitly unstage
+it if appropriate. Branch state, identity, conflicts, in-progress operations and
+pointer safety are checked before either commit; `--push` also preflights both
+upstreams. Parent pre-commit, prepare-commit-msg, commit-msg and post-commit hooks
+run with an isolated index. Hooks that add unrelated entries to it are rejected
+before recording the parent commit. The branch update uses compare-and-swap;
+there is no broad parent add/commit or reset. Signing follows `commit.gpgSign`.
+
+```sh
+vogsync commit push_swap --no-pin -m 'fix: sorting'  # Group only
+vogsync pin push_swap                             # Record current group HEAD
+vogsync commit push_swap -a -m 'fix: sorting' --push
+```
+
+`pin` also handles commits made directly with Git. An already-staged pointer
+equal to current group HEAD is accepted; if already recorded it is a safe no-op.
+It never pushes or checks remote availability, so it can record an **unpublished**
+commit. Without `--push`, commits stay local and vogsync warns: publishing the
+parent alone could reference an unavailable group commit. **Push the group first.**
+With `--push`, the group is pushed normally to its configured upstream first,
+then the parent normally to its upstream. Neither push is forced. With
+`--no-pin --push`, only the group is pushed and the parent pointer is unrecorded.
+
+**Recovery:** these operations are not atomic. If the group commit succeeds but
+the parent commit fails, it is retained; the error reports group HEAD and parent
+pointers. Fix the reported hook/identity/conflict, inspect `vogsync status
+push_swap`, then run `vogsync pin push_swap`. If the group push fails, the parent
+is not pushed. If only the parent push fails, the group is already published:
+review/reconcile the parent explicitly and run `git push` there. No successful
+commit is reset/deleted and no automatic pull, rebase, merge or rollback occurs.
+
+`status` and `doctor` explain initialization, branch/upstream (cached counts),
+internal staged/unstaged changes, group HEAD, parent index pointer and committed
+parent pointer, plus missing deployment URLs. Offline checks never clone,
+initialize, fetch or select a branch. A detached group HEAD is blocked for
+commit/pin/push/deploy: select a branch explicitly first.
+
+Group `deploy` requires both repositories initialized and clean, branches with
+upstreams, and committed/index parent pointers matching group HEAD. It deploys
+the group's **committed history directly**, not a subtree split:
+
+1. Normal push to the group's collaboration upstream.
+2. Normal push to the main repo upstream.
+3. **Force-push only** the selected group commit to the explicitly configured
+   Vogsphere destination/branch (`master` by default).
+
+You need push permissions on all three destinations. Each failure stops the
+remaining pushes and reports the destinations already published; fix the cause
+and retry, without automatic rollback. Destinations matching either collaboration
+repository are rejected, including common SSH/HTTPS spellings and Git URL
+rewrites; unknown server aliases still require human verification.
+`deploy push_swap --dry-run` checks configuration/read access but never pushes,
+commits, initializes, changes branches or updates pointers. Group **`--pull` is
+explicitly rejected**, even with `--dry-run`: update both repositories yourself,
+select the group branch, review HEAD and pin it before deploying. Regular-project
+`--pull` behavior remains unchanged.
 
 ### Help and version
 
