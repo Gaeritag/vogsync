@@ -20,6 +20,14 @@ fichiers à la racine du dépôt de destination.
 
 Aucun paquet Python ni droit administrateur n'est nécessaire.
 
+### Skill pour assistants IA
+
+Ce dépôt fournit un [skill vogsync](SKILL.md) qui explique aux assistants IA les
+commandes, la configuration et les précautions à prendre avant un déploiement
+forcé. Indiquez ce fichier à votre assistant IA. Pour qu'OpenCode le découvre
+automatiquement dans votre monorepo, copiez-le sous
+`.opencode/skills/vogsync.md` dans ce monorepo.
+
 ### Installation sous Linux et macOS
 
 Depuis le répertoire contenant `install.py` et `vogsync.py` :
@@ -374,6 +382,13 @@ by the deployment, apart from the Git objects created by the split.
   may only be reachable from campus.
 
 No Python packages or root privileges are required.
+
+## Skill for AI assistants
+
+This repository includes a [vogsync skill](SKILL.md) that teaches AI assistants
+the commands, configuration, and safeguards for force-push deployments. Point
+your AI assistant to this file. For automatic discovery by OpenCode in your own
+main repo, copy it there as `.opencode/skills/vogsync.md`.
 
 ## Installation on Linux and macOS
 
