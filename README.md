@@ -244,7 +244,15 @@ vogsync commit -m 'Fix' --push       # Puis pousser vers le suivi Git
 vogsync deploy libft --branch main   # Déployer sur une autre branche distante
 vogsync deploy libft --pull           # Mettre à jour le main repo avant le split
 vogsync status                       # État local, sans accès réseau
+vogsync status libft                 # État local de libft uniquement
 vogsync status --remote              # Comparer chaque projet à master distant
+vogsync status libft --remote        # Comparer uniquement libft à master distant
+vogsync add libft                    # Préparer tous les changements de libft
+vogsync diff libft                   # Voir les changements non préparés de libft
+vogsync diff libft --cached          # Voir les changements préparés de libft
+vogsync log libft                    # Historique des commits touchant libft
+vogsync restore libft                # Annuler les changements non préparés de libft
+vogsync restore libft --staged       # Retirer libft de l'index sans perdre les fichiers
 vogsync doctor                       # Diagnostiquer Git et l'architecture locale
 vogsync doctor --remote              # Vérifier aussi l'accès aux dépôts distants
 vogsync --help
@@ -257,6 +265,11 @@ fichiers non suivis ne sont pas ajoutés automatiquement. À la racine sans nom 
 projet, le commit n'a pas de préfixe et `-a` concerne tout le dépôt.
 
 `commit --push` et `deploy` nécessitent une branche avec un suivi distant configuré.
+`status` sans projet conserve sa vue globale ; avec un projet, il limite les fichiers
+et la vérification distante à ce projet. `add`, `diff`, `log` et `restore` acceptent
+un nom de projet ou utilisent le répertoire courant ; à la racine, le nom est
+obligatoire. `add` prépare aussi les nouveaux fichiers et les suppressions.
+`restore` sans `--staged` **perd les modifications non préparées** du projet.
 `--pull` utilise `git pull --ff-only` et peut modifier la branche locale même
 avec `--dry-run`. `status --remote` vérifie les dépôts séquentiellement, avec
 un délai SSH de 2 secondes et une limite totale de 10 secondes par interrogation.
@@ -676,8 +689,22 @@ is created.
 
 ```sh
 vogsync status            # Local repository status and configured remotes
+vogsync status libft      # Only libft's changes and configured remote
 vogsync status --remote   # Also compare each project against remote master
+vogsync status libft --remote  # Compare only libft against remote master
+vogsync add libft         # Stage all libft changes, including new/deleted files
+vogsync diff libft        # Show unstaged libft changes
+vogsync diff libft --cached  # Show staged libft changes
+vogsync log libft         # Show commits affecting libft
+vogsync restore libft     # Discard unstaged libft changes
+vogsync restore libft --staged  # Unstage libft changes
 ```
+
+Without a project, `status` still shows the whole repository. The other project
+Git commands use the current project's directory when no name is supplied, and
+require a name at the repository root. They only affect the selected project;
+`restore` without `--staged` **discards its unstaged changes**. These commands
+operate on the main repo, not on the separate Vogsphere repository.
 
 The default status does not contact the network. With `--remote`, each remote
 check uses a two-second SSH connection timeout and a ten-second overall

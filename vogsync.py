@@ -303,22 +303,29 @@ def command_deploy(args: argparse.Namespace, root: Path) -> None:
         say("Deployed {} to remote branch {}.".format(args.project, args.branch), "success")
 
 
-def command_status(root: Path, check_remote: bool) -> None:
+def command_status(root: Path, check_remote: bool, project: Optional[str] = None) -> None:
     """Show repository state and compare project splits with remote master."""
+    if project:
+        project_directory(root, project)
     print("Main repo:  {}".format(root))
-    print("Project:    {}".format(active_project(root) or "(main repo root)"))
+    print("Project:    {}".format(project or active_project(root) or "(main repo root)"))
     print("Branch:     {}".format(current_branch(root) or "(detached HEAD)"))
     print("\nWorking tree:")
-    print(git(["status", "--short", "--branch"], root).stdout.rstrip() or "(clean)")
+    status_args = ["status", "--short", "--branch"]
+    if project:
+        status_args.extend(["--", ":(literal)" + project])
+    print(git(status_args, root).stdout.rstrip() or "(clean)")
     config = load_config(root)
+    if project:
+        config = {project: config[project]} if project in config else {}
     print("\nVogsphere synchronization (remote branch: master):")
     if not config:
-        print("  No project remotes configured.")
+        print("  No project remote configured for {}.".format(project) if project else "  No project remotes configured.")
         return
     if not check_remote:
         for project, url in sorted(config.items()):
             print("  {}: {} (not checked)".format(project, url))
-        print("  Use '{} status --remote' to check synchronization.".format(PROG))
+        print("  Use '{} status {}--remote' to check synchronization.".format(PROG, project + " " if project else ""))
         return
     failures: List[str] = []
     for project, url in sorted(config.items()):
@@ -339,6 +346,27 @@ def command_status(root: Path, check_remote: bool) -> None:
             print("  {}: unavailable ({})".format(project, exc))
     if failures:
         raise ToolError("Could not check: {}.".format(", ".join(failures)))
+
+
+def command_project_git(args: argparse.Namespace, root: Path) -> None:
+    """Run a supported Git operation restricted to one top-level project."""
+    project = args.project or active_project(root)
+    if not project:
+        raise ToolError("Specify a project at the repository root.")
+    project_directory(root, project)
+    command = args.command
+    options = []
+    if command == "add":
+        options = ["-A"]
+    elif command == "log":
+        options = ["--oneline"]
+    elif command == "diff" and args.cached:
+        options = ["--cached"]
+    elif command == "restore" and args.staged:
+        options = ["--staged"]
+    result = git([command, *options, "--", ":(literal)" + project], root)
+    if result.stdout:
+        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
 
 
 def destination_key(root: Path, url: str) -> str:
@@ -558,7 +586,18 @@ def build_parser() -> argparse.ArgumentParser:
     deploy.add_argument("--dry-run", action="store_true", help="Split and check remote connectivity without pushing.")
     deploy.add_argument("--branch", default="master", help="Target remote branch (default: master).")
     status = commands.add_parser("status", help="Show repository status and configured remotes.")
+    status.add_argument("project", nargs="?", help="Show only this project's changes and remote (default: whole repo).")
     status.add_argument("-r", "--remote", action="store_true", help="Check synchronization with Vogsphere remotes (requires network).")
+    for name, help_text in (("add", "Stage all changes in a project."),
+                            ("diff", "Show unstaged changes in a project."),
+                            ("log", "Show commits affecting a project."),
+                            ("restore", "Restore unstaged changes in a project.")):
+        project_command = commands.add_parser(name, help=help_text)
+        project_command.add_argument("project", nargs="?", help="Project name; defaults to cwd (required at repo root).")
+        if name == "diff":
+            project_command.add_argument("--cached", action="store_true", help="Show staged changes instead.")
+        if name == "restore":
+            project_command.add_argument("--staged", action="store_true", help="Unstage project changes instead.")
     doctor = commands.add_parser("doctor", help="Diagnose Git health, project layout, and deployment configuration (read-only).")
     doctor.add_argument("-r", "--remote", action="store_true", help="Also check read access to main repo and project remotes (requires network).")
     doctor.add_argument("--branch", default="master", help="Project remote branch to check (default: master).")
@@ -577,7 +616,9 @@ def main() -> int:
         elif args.command == "deploy":
             command_deploy(args, root)
         elif args.command == "status":
-            command_status(root, args.remote)
+            command_status(root, args.remote, args.project)
+        elif args.command in ("add", "diff", "log", "restore"):
+            command_project_git(args, root)
         elif args.command == "doctor":
             if not args.branch or args.branch.startswith("-"):
                 raise ToolError("Invalid target branch: {!r}".format(args.branch))
